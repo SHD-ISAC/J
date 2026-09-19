@@ -30,7 +30,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          forbidden='jhentai\.top|JHApiSecretConfig|JHConsts|JHRequest|JHCookieManager|useJH2UpdateGallery|/api/config/|fetchImageHash'
+          forbidden='jhentai\.top|JHApiSecretConfig|JHConsts|JHRequest|JHCookieManager|useJH2UpdateGallery|/api/config/|/api/gallery/fetchImageHash|requestGalleryImageHashes|fetchImageHashesFromJHenTaiServer'
 
           if grep -R -nE "$forbidden" lib; then
             echo "::error::JHenTai backend code or identifiers reappeared in lib/"
