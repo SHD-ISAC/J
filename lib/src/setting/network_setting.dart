@@ -104,7 +104,7 @@ class NetworkSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCir
   }
 
   Future<void> saveProxy(JProxyType proxyType, String proxyAddress, String? proxyUsername, String? proxyPassword) async {
-    log.debug('saveProxy:$proxyType,$proxyAddress,$proxyUsername,$proxyPassword');
+    log.debug('saveProxy:$proxyType,$proxyAddress');
     this.proxyType.value = proxyType;
     this.proxyAddress.value = proxyAddress;
     this.proxyUsername.value = proxyUsername;

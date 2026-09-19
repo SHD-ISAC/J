@@ -29,7 +29,6 @@ class DownloadSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCi
   RxInt maximum = 2.obs;
   Rx<Duration> period = const Duration(seconds: 1).obs;
   RxBool downloadAllGalleriesOfSamePriority = false.obs;
-  RxBool useJH2UpdateGallery = false.obs;
   RxInt archiveDownloadIsolateCount = 1.obs;
   RxBool manageArchiveDownloadConcurrency = true.obs;
   RxBool deleteArchiveFileAfterDownload = true.obs;
@@ -62,7 +61,6 @@ class DownloadSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCi
     period.value = Duration(milliseconds: map['period']);
     downloadAllGalleriesOfSamePriority.value =
         map['downloadAllGalleriesOfSamePriority'] ?? map['downloadAllGallerysOfSamePriority'] ?? downloadAllGalleriesOfSamePriority.value;
-    useJH2UpdateGallery.value = map['useJH2UpdateGallery'] ?? useJH2UpdateGallery.value;
     archiveDownloadIsolateCount.value = map['archiveDownloadIsolateCount'] ?? archiveDownloadIsolateCount.value;
     if (archiveDownloadIsolateCount.value > 10) {
       archiveDownloadIsolateCount.value = 10;
@@ -87,7 +85,6 @@ class DownloadSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCi
       'maximum': maximum.value,
       'period': period.value.inMilliseconds,
       'downloadAllGalleriesOfSamePriority': downloadAllGalleriesOfSamePriority.value,
-      'useJH2UpdateGallery': useJH2UpdateGallery.value,
       'archiveDownloadIsolateCount': archiveDownloadIsolateCount.value,
       'manageArchiveDownloadConcurrency': manageArchiveDownloadConcurrency.value,
       'deleteArchiveFileAfterDownload': deleteArchiveFileAfterDownload.value,
@@ -195,11 +192,6 @@ class DownloadSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCi
     await saveBeanConfig();
   }
   
-  Future<void> saveUseJH2UpdateGallery(bool value) async {
-    log.debug('saveUseJH2UpdateGallery:$value');
-    useJH2UpdateGallery.value = value;
-    await saveBeanConfig();
-  }
 
   Future<void> saveArchiveDownloadIsolateCount(int count) async {
     log.debug('saveArchiveDownloadIsolateCount:$count');

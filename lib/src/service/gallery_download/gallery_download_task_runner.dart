@@ -9,7 +9,6 @@ part of 'gallery_download_service.dart';
 /// the service via its library-private aliases.
 class _GalleryDownloadTaskRunner {
   static const int _maxRetryTimes = 5;
-  static const int _maxRetryTimes4FetchImageHashes = 3;
 
   final GalleryDownloadService _service;
   final GalleryDownloadInfo gallery;
@@ -22,63 +21,10 @@ class _GalleryDownloadTaskRunner {
         return;
       }
 
-      /// If this is a update from old gallery, try to fetch image hashes from JHenTai Server
-      if (gallery.oldVersionGalleryUrl != null && downloadSetting.useJH2UpdateGallery.isTrue) {
-        List<String> imageHashes = await fetchImageHashesFromJHenTaiServer();
-
-        if (imageHashes.length == gallery.pageCount) {
-          await _service._upgradeMigrator.copyImageInfosFromImageHashes(gallery, imageHashes);
-        } else {
-          log.error('Image hashes count mismatch, gid: ${gallery.gid}, expected: ${gallery.pageCount}, actual: ${imageHashes.length}');
-        }
-      }
-
       for (int serialNo = 0; serialNo < gallery.pageCount; serialNo++) {
         processImage(serialNo);
       }
     };
-  }
-
-  Future<List<String>> fetchImageHashesFromJHenTaiServer() async {
-    if (_service._taskHasBeenPausedOrRemoved(gallery)) {
-      return [];
-    }
-
-    String? cachedImageHashes = await localConfigService.read(configKey: ConfigEnum.galleryImageHash, subConfigKey: gallery.gid.toString());
-    if (cachedImageHashes != null) {
-      return jsonDecode(cachedImageHashes).cast<String>();
-    }
-
-    GalleryDownloadInfo galleryDownloadInfo = _service.galleryDownloadInfos[gallery.gid]!;
-
-    try {
-      JHResponse response = await retry(
-        () => jhRequest.requestGalleryImageHashes(
-          gid: gallery.gid,
-          token: gallery.token,
-          cancelToken: galleryDownloadInfo.cancelToken,
-          parser: JHResponseParser.commonParse,
-        ),
-        retryIf: (e) => e is DioException && e.type != DioExceptionType.cancel,
-        onRetry: (e) => log.download('Failed to fetch image hashes, retry. Reason: ${(e as DioException).message}'),
-        maxAttempts: _maxRetryTimes4FetchImageHashes,
-      );
-
-      log.debug('Fetch image hashes response: $response');
-      if (response.isSuccess) {
-        FetchImageHashesVO fetchImageHashesVO = FetchImageHashesVO.fromResponse(response.data);
-        localConfigService.write(configKey: ConfigEnum.galleryImageHash, subConfigKey: gallery.gid.toString(), value: jsonEncode(fetchImageHashesVO.hashes));
-        return fetchImageHashesVO.hashes;
-      } else {
-        return [];
-      }
-    } on DioException catch (e) {
-      log.error('Failed to fetch image hashes', e.errorMsg, e.stackTrace);
-      return [];
-    } catch (e) {
-      log.error('Failed to fetch image hashes', e.toString(), StackTrace.current);
-      return [];
-    }
   }
 
   Future<void> processImage(int serialNo) async {

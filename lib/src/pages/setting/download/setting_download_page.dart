@@ -65,8 +65,7 @@ class _SettingDownloadPageState extends State<SettingDownloadPage> {
               _buildDownloadConcurrency(),
               _buildSpeedLimit(context),
               _buildDownloadAllGalleriesOfSamePriority(),
-              _buildUseJH2UpdateGallery(),
-              _buildArchiveDownloadIsolateCount(),
+                  _buildArchiveDownloadIsolateCount(),
               _buildManageArchiveDownloadConcurrency(),
               _buildDeleteArchiveFileAfterDownload(),
               _buildRestore(),
@@ -266,13 +265,6 @@ class _SettingDownloadPageState extends State<SettingDownloadPage> {
     );
   }
 
-  Widget _buildUseJH2UpdateGallery() {
-    return SwitchListTile(
-      title: Text('useJH2UpdateGallery'.tr),
-      value: downloadSetting.useJH2UpdateGallery.value,
-      onChanged: downloadSetting.saveUseJH2UpdateGallery,
-    );
-  }
 
   Widget _buildArchiveDownloadIsolateCount() {
     return ListTile(

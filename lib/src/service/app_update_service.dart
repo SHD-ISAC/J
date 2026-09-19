@@ -351,7 +351,7 @@ class MigrateCookieHandler implements UpdateHandler {
       }
     }
 
-    log.info('MigrateCookieHandler migrate cookies: $cookies');
+    log.info('MigrateCookieHandler migrate cookies');
     ehRequest.storeEHCookies(cookies);
   }
 

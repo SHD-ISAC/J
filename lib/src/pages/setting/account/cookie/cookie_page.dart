@@ -119,7 +119,7 @@ class _CookiePageState extends State<CookiePage> {
         }),
       );
 
-      log.info('Refresh igneous cookie, set-cookie: ${response.headers.value('set-cookie')}');
+      log.info('Refresh igneous cookie response received');
 
       List<String>? cookiePairs = response.headers.value('set-cookie')?.split(';');
       if (cookiePairs == null) {

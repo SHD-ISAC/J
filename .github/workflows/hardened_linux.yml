@@ -1,0 +1,142 @@
+name: Hardened Linux Build
+
+on:
+  push:
+    branches:
+      - 'hardened-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux-x64:
+    runs-on: ubuntu-22.04
+    env:
+      FLUTTER_VERSION: 3.44.8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify hardened source policy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          forbidden='jhentai\.top|JHApiSecretConfig|JHConsts|JHRequest|JHCookieManager|useJH2UpdateGallery|/api/config/|fetchImageHash'
+
+          if grep -R -nE "$forbidden" lib; then
+            echo "::error::JHenTai backend code or identifiers reappeared in lib/"
+            exit 1
+          fi
+
+          if grep -R -nF "Refresh igneous cookie, set-cookie:" lib; then
+            echo "::error::Sensitive Set-Cookie logging reappeared"
+            exit 1
+          fi
+
+          if grep -R -nF 'MigrateCookieHandler migrate cookies: $cookies' lib; then
+            echo "::error::Sensitive cookie migration logging reappeared"
+            exit 1
+          fi
+
+          if grep -R -nE "saveProxy:.*proxyUsername.*proxyPassword" lib; then
+            echo "::error::Proxy credential logging reappeared"
+            exit 1
+          fi
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: master
+          cache: true
+
+      - name: Show Flutter version
+        run: flutter --version
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ninja-build libfuse2 webkit2gtk-4.1
+
+      - name: Resolve Dart dependencies
+        run: flutter pub get
+
+      - name: Build Linux release
+        run: flutter build linux --release -t lib/src/main.dart
+
+      - name: Build Debian package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="$(awk '/^version:/ {print $2; exit}' pubspec.yaml)"
+          ARCH="$(echo "$RUNNER_ARCH" | tr '[:upper:]' '[:lower:]')"
+          ROOT="build/linux/JHenTai-${VERSION}-Hardened-Linux-${ARCH}"
+
+          mkdir -p "$ROOT/opt/jhentai"
+          mkdir -p "$ROOT/usr/share/applications"
+          mkdir -p "$ROOT/usr/share/icons/hicolor/512x512/apps"
+
+          cp -r "build/linux/${ARCH}/release/bundle/." "$ROOT/opt/jhentai/"
+          cp -r linux/assets/DEBIAN "$ROOT/DEBIAN"
+          chmod 0755 "$ROOT/DEBIAN/postinst" "$ROOT/DEBIAN/postrm"
+
+          cp linux/assets/top.jtmonster.jhentai.desktop "$ROOT/usr/share/applications/"
+          cp assets/icon/JHenTai_512.png "$ROOT/usr/share/icons/hicolor/512x512/apps/top.jtmonster.jhentai.png"
+
+          sed -i "/^Version: /s/Version: .*/Version: ${VERSION}/" "$ROOT/DEBIAN/control"
+
+          DEB="build/linux/JHenTai-${VERSION}-Hardened-Linux-${ARCH}.deb"
+          dpkg-deb --build --root-owner-group "$ROOT" "$DEB"
+
+          echo "deb=$DEB" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify built binary policy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TMP="$(mktemp -d)"
+          trap 'rm -rf "$TMP"' EXIT
+
+          dpkg-deb -x "${{ steps.package.outputs.deb }}" "$TMP"
+
+          APP="$TMP/opt/jhentai/lib/libapp.so"
+          test -f "$APP"
+
+          forbidden='jhentai\.top|api\.telegram\.org|discord(app)?\.com/api/webhooks|sentry\.io|mixpanel|amplitude|telemetry'
+
+          if strings -a "$APP" | grep -iE "$forbidden"; then
+            echo "::error::Unexpected forbidden endpoint or telemetry string found in libapp.so"
+            exit 1
+          fi
+
+      - name: Generate SHA-256
+        shell: bash
+        run: |
+          sha256sum "${{ steps.package.outputs.deb }}" | tee build/linux/SHA256SUMS
+
+      - name: Upload hardened artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JHenTai-Hardened-Linux-x64
+          path: |
+            ${{ steps.package.outputs.deb }}
+            build/linux/SHA256SUMS
+          if-no-files-found: error
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ steps.package.outputs.deb }}

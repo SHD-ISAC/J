@@ -7,7 +7,6 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:get/get.dart';
 import 'package:jhentai/src/l18n/locale_text.dart';
 import 'package:jhentai/src/network/eh_request.dart';
-import 'package:jhentai/src/network/jh_request.dart';
 import 'package:jhentai/src/routes/getx_router_observer.dart';
 import 'package:jhentai/src/routes/routes.dart';
 import 'package:jhentai/src/service/app_update_service.dart';
@@ -58,7 +57,6 @@ import 'network/archive_bot_request.dart';
 
 List<JHLifeCircleBean> lifeCircleBeans = [
   ehRequest,
-  jhRequest,
   archiveBotRequest,
   appUpdateService,
   galleryDownloadService,

@@ -20,8 +20,6 @@ import 'package:jhentai/src/pages/setting/about/setting_about_page.dart';
 import 'package:jhentai/src/pages/setting/account/cookie/cookie_page.dart';
 import 'package:jhentai/src/pages/setting/account/login/login_page.dart';
 import 'package:jhentai/src/pages/setting/advanced/setting_advanced_page.dart';
-import 'package:jhentai/src/pages/setting/cloud/config_sync/config_sync_page.dart';
-import 'package:jhentai/src/pages/setting/cloud/setting_cloud_page.dart';
 import 'package:jhentai/src/pages/setting/download/extra_gallery_scan_path/extra_gallery_scan_path_page.dart';
 import 'package:jhentai/src/pages/setting/download/setting_download_page.dart';
 import 'package:jhentai/src/pages/setting/eh/setting_eh_page.dart';
@@ -103,7 +101,6 @@ class Routes {
   static const String settingFrameRate = "/setting_advanced/frameRate";
   static const String settingPerformance = "/setting_performance";
   static const String settingMouseWheel = "/setting_mouse_wheel";
-  static const String settingCloud = "/setting_cloud";
   static const String settingSecurity = "/setting_security";
   static const String settingAbout = "/setting_about";
   static const String settingKeyboardShortcuts = "/setting_read/keyboard_shortcuts";
@@ -130,7 +127,6 @@ class Routes {
   static const String logList = "/setting_advanced/logList";
   static const String log = "/setting_advanced/logList/log";
 
-  static const String configSync = "/setting_cloud/configSync";
 
   static final Transition defaultTransition = preferenceSetting.enableSwipeBackGesture.isTrue ? Transition.cupertino : Transition.fadeIn;
 
@@ -339,16 +335,6 @@ class Routes {
       page: () => const SettingFrameRatePage().withEscOrFifthButton2BackRightRoute(),
       transition: defaultTransition,
       offAllBefore: false,
-    ),
-    EHPage(
-      name: settingCloud,
-      page: () => const SettingCloudPage().withEscOrFifthButton2BackRightRoute(),
-      transition: defaultTransition,
-    ),
-    EHPage(
-      name: configSync,
-      page: () => const ConfigSyncPage().withEscOrFifthButton2BackRightRoute(),
-      transition: defaultTransition,
     ),
     EHPage(
       name: settingSecurity,
