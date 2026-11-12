@@ -1,4 +1,4 @@
-name: Hardened Linux Build
+name: Hardened Desktop Build
 
 on:
   push:
@@ -16,14 +16,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-linux-x64:
-    runs-on: ubuntu-22.04
+  build:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x64
+            runner: ubuntu-22.04
+            artifact: JHenTai-Hardened-Linux-x64
+          - platform: macOS arm64
+            runner: macos-26-intel
+            artifact: JHenTai-Hardened-macOS-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
     env:
       FLUTTER_VERSION: 3.44.8
+      FLUTTER_COMMIT: 058e0af2c2b57e369d905a03ac9748b0ebf543c6
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Verify hardened source policy
         shell: bash
@@ -52,29 +70,44 @@ jobs:
             exit 1
           fi
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: master
-          cache: true
+      - name: Select Xcode
+        if: runner.os == 'macOS'
+        run: |
+          test "$(uname -m)" = x86_64
+          developer_dir=/Applications/Xcode_26.6.app/Contents/Developer
+          test -d "$developer_dir"
+          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$developer_dir" xcodebuild -version
 
-      - name: Show Flutter version
-        run: flutter --version
+      - name: Install pinned Flutter
+        run: |
+          set -euo pipefail
+          sdk="$RUNNER_TEMP/flutter"
+          git init --quiet "$sdk"
+          git -C "$sdk" remote add origin https://github.com/flutter/flutter.git
+          git -C "$sdk" fetch --depth=1 origin "refs/tags/$FLUTTER_VERSION:refs/tags/$FLUTTER_VERSION"
+          test "$(git -C "$sdk" rev-parse "$FLUTTER_VERSION^{commit}")" = "$FLUTTER_COMMIT"
+          git -C "$sdk" checkout --quiet --detach "$FLUTTER_COMMIT"
+          "$sdk/bin/flutter" --disable-analytics
+          "$sdk/bin/flutter" --version
+          echo "$sdk/bin" >> "$GITHUB_PATH"
 
       - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -y
           sudo apt-get install -y ninja-build libfuse2 webkit2gtk-4.1
 
       - name: Resolve Dart dependencies
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Build Linux release
-        run: flutter build linux --release -t lib/src/main.dart
+        if: runner.os == 'Linux'
+        run: flutter build linux --release --no-pub -t lib/src/main.dart
 
       - name: Build Debian package
-        id: package
+        if: runner.os == 'Linux'
+        id: deb
         shell: bash
         run: |
           set -euo pipefail
@@ -99,44 +132,66 @@ jobs:
           DEB="build/linux/JHenTai-${VERSION}-Hardened-Linux-${ARCH}.deb"
           dpkg-deb --build --root-owner-group "$ROOT" "$DEB"
 
-          echo "deb=$DEB" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "package=$DEB" >> "$GITHUB_OUTPUT"
+
+      - name: Build macOS arm64 release
+        if: runner.os == 'macOS'
+        run: |
+          # Flutter forwards EXCLUDED_ARCHS to the Xcode build and its Swift packages.
+          printf 'EXCLUDED_ARCHS = x86_64\n' > "$RUNNER_TEMP/jhentai-arm64.xcconfig"
+          XCODE_XCCONFIG_FILE="$RUNNER_TEMP/jhentai-arm64.xcconfig" \
+            flutter build macos --release --no-pub -t lib/src/main.dart
+
+      - name: Package and verify macOS DMG
+        if: runner.os == 'macOS'
+        id: dmg
+        run: bash script/build_hardened_macos_dmg.sh
 
       - name: Verify built binary policy
+        env:
+          DEB: ${{ steps.deb.outputs.package }}
         shell: bash
         run: |
           set -euo pipefail
 
-          TMP="$(mktemp -d)"
-          trap 'rm -rf "$TMP"' EXIT
-
-          dpkg-deb -x "${{ steps.package.outputs.deb }}" "$TMP"
-
-          APP="$TMP/opt/jhentai/lib/libapp.so"
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            TMP="$(mktemp -d)"
+            trap 'rm -rf "$TMP"' EXIT
+            dpkg-deb -x "$DEB" "$TMP"
+            APP="$TMP/opt/jhentai/lib/libapp.so"
+          else
+            APP=build/macos/Build/Products/Release/jhentai.app/Contents/Frameworks/App.framework/App
+          fi
           test -f "$APP"
 
           forbidden='jhentai\.top|api\.telegram\.org|discord(app)?\.com/api/webhooks|sentry\.io|mixpanel|amplitude|telemetry'
 
           if strings -a "$APP" | grep -iE "$forbidden"; then
-            echo "::error::Unexpected forbidden endpoint or telemetry string found in libapp.so"
+            echo "::error::Unexpected forbidden endpoint or telemetry string found in $APP"
             exit 1
           fi
 
       - name: Generate SHA-256
-        shell: bash
+        id: checksum
+        env:
+          PACKAGE: ${{ steps.deb.outputs.package || steps.dmg.outputs.package }}
         run: |
-          sha256sum "${{ steps.package.outputs.deb }}" | tee build/linux/SHA256SUMS
-
-      - name: Upload hardened artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: JHenTai-Hardened-Linux-x64
-          path: |
-            ${{ steps.package.outputs.deb }}
-            build/linux/SHA256SUMS
-          if-no-files-found: error
+          set -euo pipefail
+          test -f "$PACKAGE"
+          directory="$(dirname "$PACKAGE")"
+          (cd "$directory" && shasum -a 256 "$(basename "$PACKAGE")") | tee "$directory/SHA256SUMS"
+          echo "file=$directory/SHA256SUMS" >> "$GITHUB_OUTPUT"
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: ${{ steps.package.outputs.deb }}
+          subject-path: ${{ steps.deb.outputs.package || steps.dmg.outputs.package }}
+
+      - name: Upload hardened artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ steps.deb.outputs.package || steps.dmg.outputs.package }}
+            ${{ steps.checksum.outputs.file }}
+          if-no-files-found: error

@@ -73,6 +73,9 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
   late Worker timeoutListener;
 
   @override
+  List<JHLifeCircleBean> get initDependencies => super.initDependencies..addAll([downloadSetting, networkSetting]);
+
+  @override
   Future<void> doInitBean() async {
     Get.put(this, permanent: true);
 
@@ -1032,6 +1035,17 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
     queryParameters.putIfAbsent('start', () => '1');
     Uri replacedUri = uri.replace(queryParameters: queryParameters);
     downloadPath = replacedUri.toString();
+
+    /// the bot protocol only returns the original archive url; the resample variant lives at the same path with trailing '/2' replaced by '/3'
+    if (archiveDownloadInfo.parseSource != ArchiveParseSource.official.code && !archive.isOriginal) {
+      List<String> segments = List.of(replacedUri.pathSegments);
+      if (segments.isNotEmpty && segments.last == '2') {
+        segments[segments.length - 1] = '3';
+        downloadPath = replacedUri.replace(pathSegments: segments).toString();
+      } else {
+        log.warning('Bot returned archive url without trailing /2 segment, fallback to original: $downloadPath');
+      }
+    }
 
     if (archiveDownloadInfo.parseSource == ArchiveParseSource.official.code) {
       archiveDownloadInfo.downloadUrl = 'https://' + Uri.parse(archiveDownloadInfo.downloadPageUrl!).host + downloadPath;
