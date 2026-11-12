@@ -30,7 +30,8 @@ mounted=true
 packaged_app="$work/mount/JHenTai.app"
 test "$(lipo -archs "$packaged_app/Contents/MacOS/$binary")" = arm64
 codesign --verify --deep --strict --verbose=2 "$packaged_app"
-codesign -d --entitlements - "$packaged_app" > "$work/entitlements.plist"
+codesign -d --entitlements - --xml "$packaged_app" | \
+  plutil -convert xml1 -o "$work/entitlements.plist" -
 test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$work/entitlements.plist")" = true
 
 while IFS= read -r -d '' file_path; do
