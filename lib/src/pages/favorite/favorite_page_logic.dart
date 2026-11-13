@@ -62,7 +62,6 @@ class FavoritePageLogic extends BasePageLogic {
     try {
       await ehRequest.requestChangeFavoriteSortOrder(result, parser: EHSpiderParser.galleryPage2GalleryPageInfo);
     } on DioException catch (e) {
-      /// handle with domain fronting, manually load more
       if (e.response?.statusCode == 403 && e.response!.redirects.isNotEmpty) {
         return loadMore(checkLoadingState: false);
       }

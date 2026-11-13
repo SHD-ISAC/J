@@ -11,7 +11,6 @@ import 'package:get/get_rx/get_rx.dart';
 import 'package:get/get_utils/get_utils.dart';
 import 'package:jhentai/src/database/dao/archive_dao.dart';
 import 'package:jhentai/src/database/dao/gallery_dao.dart';
-import 'package:jhentai/src/extension/dio_exception_extension.dart';
 import 'package:jhentai/src/network/eh_request.dart';
 import 'package:jhentai/src/setting/archive_bot_setting.dart';
 import 'package:jhentai/src/setting/network_setting.dart';
@@ -122,7 +121,7 @@ class ScheduleService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBea
         );
         log.trace('refreshGalleryTags success, pageNo: $pageNo, archives: ${galleries.map((a) => a.gid).toList()}');
       } catch (e) {
-        log.warning('refreshGalleryTags error, galleries: ${galleries.map((a) => (gid: a.gid, token: a.token)).toList()}', e, true);
+        log.warning('refreshGalleryTags error, gallery IDs: ${galleries.map((a) => a.gid).toList()}', e, true);
       }
 
       pageNo++;
@@ -242,15 +241,15 @@ class ScheduleService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBea
         apiAddress: archiveBotSetting.apiAddress.value!,
         apiKey: archiveBotSetting.apiKey.value!,
       );
-      log.debug('Auto Checkin response: $response');
+      log.debug('Automatic archive bot check-in result: ${response.code}');
       if (response.isSuccess) {
         final checkInVO = archiveBotSetting.botType.value.parseCheckIn(response.data);
         snack('checkInSuccess'.tr, 'checkInSuccessHint'.trArgs([checkInVO.getGP.toString(), checkInVO.currentGP.toString()]));
       }
     } on DioException catch (e) {
-      log.error('Failed to auto checkin', e.errorMsg, e.stackTrace);
-    } catch (e) {
-      log.error('Failed to auto checkin', e.toString(), StackTrace.current);
+      log.error('Failed to auto checkin', e.type, e.stackTrace);
+    } catch (e, stackTrace) {
+      log.error('Failed to auto checkin', e.runtimeType, stackTrace);
     }
   }
 }

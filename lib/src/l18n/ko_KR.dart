@@ -420,10 +420,6 @@ class ko_KR {
       'ineffectiveInGalleryPage': '현재 갤러리 페이지에서 유효하지 않습니다.',
 
       /// advanced setting page
-      'enableDomainFronting': '도메인 우회 활성화',
-      'bypassSNIBlocking': 'SNI 우회 차단',
-      'hostMapping': '호스트 매핑',
-      'hostMappingHint': '도메인 프론팅에 사용됨',
       'proxyAddress': '프록시 주소',
       'proxyAddressHint': '프록시 서버를 사용한다면 정확하게 설정해야 합니다.',
       'saveSuccess': '저장 성공',

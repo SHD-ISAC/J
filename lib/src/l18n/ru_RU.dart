@@ -424,10 +424,6 @@ class ru_RU {
       'ineffectiveInGalleryPage': 'Сейчас не действует на странице галереи.',
 
       /// advanced setting page
-      'enableDomainFronting': 'Включить Domain Fronting',
-      'bypassSNIBlocking': 'Обход блокировки SNI',
-      'hostMapping': 'Сопоставление хостов',
-      'hostMappingHint': 'Используется для domain fronting',
       'proxyAddress': 'Адрес прокси',
       'proxyAddressHint': 'Если вы используете прокси-сервер, настройте его правильно',
       'saveSuccess': 'Успешно сохранено',

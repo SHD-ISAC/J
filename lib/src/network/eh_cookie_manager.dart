@@ -3,9 +3,9 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 
+import '../consts/eh_consts.dart';
 import '../enum/config_enum.dart';
 import '../service/local_config_service.dart';
-import '../setting/network_setting.dart';
 import '../utils/cookie_util.dart';
 
 class EHCookieManager extends Interceptor {
@@ -41,7 +41,7 @@ class EHCookieManager extends Interceptor {
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
     try {
-      if (networkSetting.allHostAndIPs.contains(options.uri.host)) {
+      if (_isTrustedCookieOrigin(options.uri)) {
         options.headers[HttpHeaders.cookieHeader] = CookieUtil.parse2String(cookies);
       }
       handler.next(options);
@@ -52,9 +52,9 @@ class EHCookieManager extends Interceptor {
   }
 
   @override
-  void onResponse(Response response, ResponseInterceptorHandler handler) {
+  void onResponse(Response response, ResponseInterceptorHandler handler) async {
     try {
-      _saveEHCookies(response);
+      await _saveEHCookies(response);
       handler.next(response);
     } on Exception catch (e, s) {
       final err = DioException(requestOptions: response.requestOptions, error: e, stackTrace: s);
@@ -76,14 +76,32 @@ class EHCookieManager extends Interceptor {
   }
 
   Future<void> _saveEHCookies(Response response) async {
-    List<String>? cookieStrs = response.headers[HttpHeaders.setCookieHeader];
-    if (cookieStrs == null) {
+    final headers = response.headers[HttpHeaders.setCookieHeader];
+    if (headers == null || !isTrustedResponse(response)) {
       return;
     }
 
-    if (networkSetting.allHostAndIPs.contains(response.requestOptions.uri.host)) {
-      List<Cookie> cookies = cookieStrs.map(Cookie.fromSetCookieValue).map((cookie) => Cookie(cookie.name, cookie.value)).toList();
+    final cookies = CookieUtil.parseSetCookieHeaders(headers).map((cookie) => Cookie(cookie.name, cookie.value)).toList();
+    if (cookies.isNotEmpty) {
       await storeEHCookies(cookies);
     }
+  }
+
+  static bool isTrustedResponse(Response response) {
+    var uri = response.requestOptions.uri;
+    if (!_isTrustedCookieOrigin(uri)) {
+      return false;
+    }
+    for (final redirect in response.redirects) {
+      uri = uri.resolveUri(redirect.location);
+      if (!_isTrustedCookieOrigin(uri)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static bool _isTrustedCookieOrigin(Uri uri) {
+    return uri.isScheme('https') && uri.port == 443 && EHConsts.requestHosts.contains(uri.host);
   }
 }

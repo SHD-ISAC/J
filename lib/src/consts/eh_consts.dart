@@ -9,6 +9,14 @@ class EHConsts {
 
   static const String EXIndex = 'https://exhentai.org';
 
+  static const Set<String> requestHosts = {
+    'e-hentai.org',
+    'exhentai.org',
+    'api.e-hentai.org',
+    'upld.e-hentai.org',
+    'forums.e-hentai.org',
+  };
+
   static String get EPopular => ehSetting.site.value == 'EH' ? EHPopular : EXPopular;
 
   static const String EHPopular = 'https://e-hentai.org/popular';

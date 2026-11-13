@@ -132,7 +132,7 @@ class _ArchiveBotSettingsPageState extends State<ArchiveBotSettingsPage> {
         apiAddress: archiveBotSetting.apiAddress.value!,
         apiKey: archiveBotSetting.apiKey.value!,
       );
-      log.info('Check balance response: $response');
+      log.info('Archive bot balance result: ${response.code}');
 
       if (response.isSuccess) {
         setStateSafely(() {
@@ -144,11 +144,11 @@ class _ArchiveBotSettingsPageState extends State<ArchiveBotSettingsPage> {
         setStateSafely(() => _balanceState = LoadingState.error);
       }
     } on DioException catch (e) {
-      log.error('Failed to check balance', e.errorMsg, e.stackTrace);
+      log.error('Failed to check balance', e.type, e.stackTrace);
       snack('checkBalanceFailed'.tr, e.errorMsg ?? '');
       setStateSafely(() => _balanceState = LoadingState.error);
-    } catch (e) {
-      log.error('Failed to check balance', e.toString(), StackTrace.current);
+    } catch (e, stackTrace) {
+      log.error('Failed to check balance', e.runtimeType, stackTrace);
       snack('checkBalanceFailed'.tr, e.toString());
       setStateSafely(() => _balanceState = LoadingState.error);
     }
@@ -173,7 +173,7 @@ class _ArchiveBotSettingsPageState extends State<ArchiveBotSettingsPage> {
         apiAddress: archiveBotSetting.apiAddress.value!,
         apiKey: archiveBotSetting.apiKey.value!,
       );
-      log.info('Checkin response: $response');
+      log.info('Archive bot check-in result: ${response.code}');
       if (response.isSuccess) {
         final checkInVO = archiveBotSetting.botType.value.parseCheckIn(response.data);
         setStateSafely(() {
@@ -186,11 +186,11 @@ class _ArchiveBotSettingsPageState extends State<ArchiveBotSettingsPage> {
         setStateSafely(() => _checkinState = LoadingState.error);
       }
     } on DioException catch (e) {
-      log.error('Failed to checkin', e.errorMsg, e.stackTrace);
+      log.error('Failed to checkin', e.type, e.stackTrace);
       snack('checkInFailed'.tr, e.errorMsg ?? '');
       setStateSafely(() => _checkinState = LoadingState.error);
-    } catch (e) {
-      log.error('Failed to checkin', e.toString(), StackTrace.current);
+    } catch (e, stackTrace) {
+      log.error('Failed to checkin', e.runtimeType, stackTrace);
       snack('checkInFailed'.tr, e.toString());
       setStateSafely(() => _checkinState = LoadingState.error);
     }

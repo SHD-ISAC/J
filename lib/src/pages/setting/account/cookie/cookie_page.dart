@@ -9,6 +9,7 @@ import 'package:get/get_utils/get_utils.dart';
 import 'package:jhentai/src/consts/eh_consts.dart';
 import 'package:jhentai/src/extension/dio_exception_extension.dart';
 import 'package:jhentai/src/extension/widget_extension.dart';
+import 'package:jhentai/src/network/eh_cookie_manager.dart';
 import 'package:jhentai/src/network/eh_request.dart';
 import 'package:jhentai/src/setting/user_setting.dart';
 import 'package:jhentai/src/utils/cookie_util.dart';
@@ -17,7 +18,6 @@ import 'package:jhentai/src/utils/toast_util.dart';
 import 'package:jhentai/src/widget/loading_state_indicator.dart';
 
 import '../../../../exception/eh_site_exception.dart';
-import '../../../../network/eh_ip_provider.dart';
 import '../../../../network/eh_timeout_translator.dart';
 import '../../../../service/log.dart';
 import '../../../../setting/network_setting.dart';
@@ -121,36 +121,18 @@ class _CookiePageState extends State<CookiePage> {
 
       log.info('Refresh igneous cookie response received');
 
-      List<String>? cookiePairs = response.headers.value('set-cookie')?.split(';');
-      if (cookiePairs == null) {
-        snack('refreshIgneousFailed'.tr, 'Sad panda');
-        setStateSafely(() {
-          _refreshIgneousState = LoadingState.error;
-        });
-        return;
-      }
-
-      for (String cookiePair in cookiePairs) {
-        String name = cookiePair.split('=')[0];
-        String value = cookiePair.split('=')[1];
-        if (name != EHConsts.igneousCookieName) {
-          continue;
+      if (EHCookieManager.isTrustedResponse(response)) {
+        final cookies = CookieUtil.parseSetCookieHeaders(response.headers[HttpHeaders.setCookieHeader] ?? []);
+        for (final cookie in cookies) {
+          if (cookie.name == EHConsts.igneousCookieName && cookie.value != 'mystery') {
+            await ehRequest.storeEHCookies([Cookie(cookie.name, cookie.value)]);
+            toast('success'.tr);
+            setStateSafely(() {
+              _refreshIgneousState = LoadingState.success;
+            });
+            return;
+          }
         }
-
-        if (value == 'mystery') {
-          snack('refreshIgneousFailed'.tr, 'Sad panda');
-          setStateSafely(() {
-            _refreshIgneousState = LoadingState.error;
-          });
-          return;
-        }
-
-        ehRequest.storeEHCookies([Cookie(name, value)]);
-        toast('success'.tr);
-        setStateSafely(() {
-          _refreshIgneousState = LoadingState.success;
-        });
-        return;
       }
 
       snack('refreshIgneousFailed'.tr, 'Sad panda');
@@ -159,21 +141,21 @@ class _CookiePageState extends State<CookiePage> {
       });
       return;
     } on DioException catch (e) {
-      log.error('Refresh igneous failed: ${e.errorMsg}');
+      log.error('Refresh igneous failed', e.type);
       snack('refreshIgneousFailed'.tr, e.errorMsg ?? '');
       setStateSafely(() {
         _refreshIgneousState = LoadingState.error;
       });
       return;
     } on EHSiteException catch (e) {
-      log.error('Refresh igneous failed: ${e.message}');
+      log.error('Refresh igneous failed', e.type);
       snack('refreshIgneousFailed'.tr, e.message);
       setStateSafely(() {
         _refreshIgneousState = LoadingState.error;
       });
       return;
-    } catch (e, s) {
-      log.error('Refresh igneous failed: $e');
+    } catch (e) {
+      log.error('Refresh igneous failed', e.runtimeType);
       snack('refreshIgneousFailed'.tr, e.toString());
       setStateSafely(() {
         _refreshIgneousState = LoadingState.error;
@@ -190,46 +172,6 @@ class _CookiePageState extends State<CookiePage> {
     _dio = Dio(BaseOptions(
       connectTimeout: Duration(milliseconds: networkSetting.connectTimeout.value),
       receiveTimeout: Duration(milliseconds: networkSetting.receiveTimeout.value),
-    ));
-
-    EHIpProvider _ehIpProvider = RoundRobinIpProvider(NetworkSetting.host2IPs);
-
-    _dio!.interceptors.add(InterceptorsWrapper(
-      onRequest: (RequestOptions options, RequestInterceptorHandler handler) {
-        if (networkSetting.enableDomainFronting.isFalse) {
-          handler.next(options);
-          return;
-        }
-
-        String rawPath = options.path;
-        String host = options.uri.host;
-        if (!_ehIpProvider.supports(host)) {
-          handler.next(options);
-          return;
-        }
-
-        String ip = _ehIpProvider.nextIP(host);
-        handler.next(options.copyWith(
-          path: rawPath.replaceFirst(host, ip),
-          headers: {...options.headers, 'host': host},
-          extra: options.extra..[EHRequest.domainFrontingExtraKey] = {'host': host, 'ip': ip},
-        ));
-      },
-      onError: (DioException e, ErrorInterceptorHandler handler) {
-        if (!e.requestOptions.extra.containsKey(EHRequest.domainFrontingExtraKey)) {
-          handler.next(e);
-          return;
-        }
-
-        if (e.type == DioExceptionType.connectionTimeout || e.type == DioExceptionType.badResponse || e.type == DioExceptionType.connectionError) {
-          String host = e.requestOptions.extra[EHRequest.domainFrontingExtraKey]['host'];
-          String ip = e.requestOptions.extra[EHRequest.domainFrontingExtraKey]['ip'];
-          _ehIpProvider.addUnavailableIp(host, ip);
-          log.info('Refresh igneous, add unavailable host-ip: $host-$ip');
-        }
-
-        handler.next(e);
-      },
     ));
 
     _dio!.interceptors.add(EHTimeoutTranslator());

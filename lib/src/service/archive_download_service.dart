@@ -733,7 +733,7 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
         snack('archiveError'.tr, 'Expired or invalid session!', isShort: true);
         return pauseDownloadArchive(archive.gid);
       } else {
-        log.download('Download archive 410, try re-parse. Archive: ${archive.title} Response: ${e.response!.data}');
+        log.download('Download archive 410, try re-parse. Archive: ${archive.title}');
 
         archiveDownloadInfos[archive.gid]!.downloadUrl = null;
 
@@ -1003,10 +1003,10 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
             cancelToken: archiveDownloadInfo.cancelToken,
           ),
           retryIf: (e) => e is DioException && e.type != DioExceptionType.cancel,
-          onRetry: (e) => log.download('Parse archive download url: ${archive.title} failed, retry. Reason: ${(e as DioException).message}'),
+          onRetry: (e) => log.download('Archive bot URL resolution failed, retrying: ${(e as DioException).type}'),
           maxAttempts: _maxRetryTimes,
         );
-        log.download('Parse archive download url via bot, response: $response');
+        log.download('Archive bot URL resolution result: ${response.code}');
 
         if (response.isSuccess) {
           ArchiveResolveVO archiveResolveVO = archiveBotSetting.botType.value.parseResolve(response.data);
@@ -1022,7 +1022,7 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
 
         return await _getDownloadUrl(archive);
       } catch (e) {
-        log.download('Parse archive download url error, reason: $e');
+        log.download('Archive bot URL resolution failed: ${e.runtimeType}');
         snack('archiveError'.tr, e.toString(), isShort: true);
         return pauseDownloadArchive(archive.gid);
       }
@@ -1043,7 +1043,7 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
         segments[segments.length - 1] = '3';
         downloadPath = replacedUri.replace(pathSegments: segments).toString();
       } else {
-        log.warning('Bot returned archive url without trailing /2 segment, fallback to original: $downloadPath');
+        log.warning('Bot returned archive URL without the expected suffix');
       }
     }
 
@@ -1053,7 +1053,7 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
       archiveDownloadInfo.downloadUrl = downloadPath;
     }
 
-    log.trace('Parse archive download url success: ${archive.title}, original: ${archive.isOriginal}, url: ${archiveDownloadInfo.downloadUrl}');
+    log.trace('Parse archive download URL success: ${archive.title}, original: ${archive.isOriginal}');
     return _updateArchiveStatus(archive.gid, ArchiveStatus.parsedDownloadUrl);
   }
 

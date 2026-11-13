@@ -22,7 +22,6 @@ class SettingNetworkPage extends StatelessWidget {
       body: Obx(() => ListView(
             padding: const EdgeInsets.only(top: 16),
             children: [
-              _buildEnableDomainFronting(),
               _buildProxyAddress(),
               _buildPageCacheMaxAge(),
               _buildCacheImageExpireDuration(),
@@ -40,15 +39,6 @@ class SettingNetworkPage extends StatelessWidget {
               ),
             ],
           ).withListTileTheme(context)),
-    );
-  }
-
-  Widget _buildEnableDomainFronting() {
-    return SwitchListTile(
-      title: Text('enableDomainFronting'.tr),
-      subtitle: Text('bypassSNIBlocking'.tr),
-      value: networkSetting.enableDomainFronting.value,
-      onChanged: networkSetting.saveEnableDomainFronting,
     );
   }
 

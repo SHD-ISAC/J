@@ -420,10 +420,6 @@ class en_US {
       'ineffectiveInGalleryPage': 'Ineffective in gallery page now.',
 
       /// advanced setting page
-      'enableDomainFronting': 'Enable Domain Fronting',
-      'bypassSNIBlocking': 'Bypass SNI blocking',
-      'hostMapping': 'Host Mapping',
-      'hostMappingHint': 'Used for domain fronting',
       'proxyAddress': 'Proxy Address',
       'proxyAddressHint': 'If you use proxy server, make sure to set it up correctly',
       'saveSuccess': 'Save success',

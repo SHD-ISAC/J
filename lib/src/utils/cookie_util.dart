@@ -1,28 +1,44 @@
 import 'dart:io';
 
 import 'package:collection/collection.dart';
-import 'package:jhentai/src/utils/string_uril.dart';
-
-import '../service/log.dart';
 
 class CookieUtil {
   static List<Cookie> parse2Cookies(String? cookiesString) {
-    return callWithParamsUploadIfErrorOccurs(
-      () {
-        if (isEmptyOrNull(cookiesString)) {
-          return <Cookie>[];
+    if (cookiesString == null || cookiesString.trim().isEmpty) {
+      return [];
+    }
+
+    final cookies = <Cookie>[];
+    try {
+      for (final entry in cookiesString.split(';')) {
+        final pair = entry.trim();
+        if (pair.isEmpty) {
+          continue;
         }
-        return cookiesString!.split(';').map((pair) {
-          List<String> nameAndValue = pair.trim().split('=');
-          if (nameAndValue.length < 2) {
-            log.error('parse2Cookies error: $cookiesString');
-          }
-          return Cookie(nameAndValue[0], nameAndValue[1]);
-        }).toList();
-      },
-      params: cookiesString,
-      defaultValue: [],
-    );
+        final separator = pair.indexOf('=');
+        if (separator <= 0) {
+          return [];
+        }
+        cookies.add(Cookie(pair.substring(0, separator).trim(), pair.substring(separator + 1).trim()));
+      }
+    } on FormatException {
+      return [];
+    }
+    return cookies;
+  }
+
+  static List<Cookie> parseSetCookieHeaders(Iterable<String> headers) {
+    final cookies = <Cookie>[];
+    for (final header in headers) {
+      try {
+        cookies.add(Cookie.fromSetCookieValue(header));
+      } on FormatException {
+        continue;
+      } on HttpException {
+        continue;
+      }
+    }
+    return cookies;
   }
 
   static String parse2String(List<Cookie> cookies) {

@@ -123,7 +123,6 @@ class ArchiveBotSetting with JHLifeCircleBeanWithConfigStorage implements JHLife
     String? address,
     String? key,
   }) async {
-    log.debug('saveConfig: type=$type, address=$address, key=$key');
     botType.value = type;
     apiAddress.value = address;
     apiKey.value = key;
@@ -131,13 +130,11 @@ class ArchiveBotSetting with JHLifeCircleBeanWithConfigStorage implements JHLife
   }
 
   Future<void> saveApiAddress(String? value) async {
-    log.debug('saveApiAddress: $value');
     apiAddress.value = value;
     await saveBeanConfig();
   }
 
   Future<void> saveApiKey(String? value) async {
-    log.debug('saveApiKey: $value');
     apiKey.value = value;
     await saveBeanConfig();
   }

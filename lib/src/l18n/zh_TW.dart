@@ -420,10 +420,6 @@ class zh_TW {
       'ineffectiveInGalleryPage': '在畫廊頁面暫時無效',
 
       /// advanced setting page
-      'enableDomainFronting': '開啟域名前置',
-      'bypassSNIBlocking': '繞過SNI封鎖',
-      'hostMapping': 'Host映射',
-      'hostMappingHint': '用於域名前置',
       'proxyAddress': '代理伺服器地址',
       'proxyAddressHint': '如果你使用了代理伺服器，務必正確設定',
       'saveSuccess': '儲存成功',

@@ -155,13 +155,13 @@ class LoginPageLogic extends GetxController with GetSingleTickerProviderStateMix
         EHSpiderParser.loginPage2UserInfoOrErrorMsg,
       );
     } on DioException catch (e) {
-      log.error('loginFail'.tr, e.errorMsg);
+      log.error('loginFail'.tr, e.type);
       snack('loginFail'.tr, e.errorMsg ?? '');
       state.loginState = LoadingState.error;
       update([loadingStateId]);
       return;
     } on EHSiteException catch (e) {
-      log.error('loginFail'.tr, e.message);
+      log.error('loginFail'.tr, e.type);
       snack('loginFail'.tr, e.message);
       state.loginState = LoadingState.error;
       update([loadingStateId]);
@@ -237,7 +237,7 @@ class LoginPageLogic extends GetxController with GetSingleTickerProviderStateMix
       await ehRequest.requestHomePage();
       userInfo = await ehRequest.requestForum(int.parse(state.ipbMemberId!), EHSpiderParser.profilePage2UserInfo);
     } on DioException catch (e) {
-      log.error('loginFail'.tr, e.errorMsg);
+      log.error('loginFail'.tr, e.type);
       snack('loginFail'.tr, e.errorMsg ?? '', isShort: true);
 
       await ehRequest.removeAllCookies();
@@ -246,7 +246,7 @@ class LoginPageLogic extends GetxController with GetSingleTickerProviderStateMix
       update([loadingStateId]);
       return;
     } catch (e) {
-      log.error('loginFail'.tr, e.toString());
+      log.error('loginFail'.tr, e.runtimeType);
       snack('loginFail'.tr, e.toString(), isShort: true);
 
       await ehRequest.removeAllCookies();

@@ -421,10 +421,6 @@ class pt_BR {
       'ineffectiveInGalleryPage': 'Ineficaz na página da galeria agora.',
 
       /// advanced setting page
-      'enableDomainFronting': 'Ativar frente de Domínio',
-      'bypassSNIBlocking': 'Ignorar bloqueio de SNI',
-      'hostMapping': 'Mapeamento de host',
-      'hostMappingHint': 'Usado para frente de domínio',
       'proxyAddress': 'Endereço de proxy',
       'proxyAddressHint': 'Se você usa servidor proxy, certifique-se de configurá-lo corretamente',
       'saveSuccess': 'Salvo com sucesso',

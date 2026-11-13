@@ -23,7 +23,7 @@ class AdvancedSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCi
   void applyBeanConfig(String configString) {
     Map map = jsonDecode(configString);
 
-    enableLogging.value = map['enableLogging'];
+    enableLogging.value = map['enableLogging'] ?? enableLogging.value;
     enableVerboseLogging.value = map['enableVerboseLogging'] ?? enableVerboseLogging.value;
     enableCheckUpdate.value = map['enableCheckUpdate'] ?? enableCheckUpdate.value;
     enableCheckClipboard.value = map['enableCheckClipboard'] ?? enableCheckClipboard.value;

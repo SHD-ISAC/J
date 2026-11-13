@@ -61,7 +61,6 @@ class UserSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCircle
     String? avatarImgUrl,
     String? nickName,
   }) async {
-    log.debug('saveUserInfo: $userName, $ipbMemberId, $ipbPassHash, $avatarImgUrl, $nickName');
     this.userName.value = userName;
     this.ipbPassHash.value = ipbPassHash;
     this.ipbMemberId.value = ipbMemberId;
@@ -75,7 +74,6 @@ class UserSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCircle
     String? avatarImgUrl,
     required String nickName,
   }) async {
-    log.debug('saveUserNameAndAvatar:$userName $avatarImgUrl $nickName');
     this.userName.value = userName;
     this.avatarImgUrl.value = avatarImgUrl;
     this.nickName.value = nickName;

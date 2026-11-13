@@ -1,11 +1,9 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
-import 'package:jhentai/src/exception/eh_site_exception.dart';
 import 'package:jhentai/src/setting/advanced_setting.dart';
 import 'package:jhentai/src/service/path_service.dart';
 import 'package:logger/logger.dart';
@@ -24,17 +22,26 @@ class LogService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
   Logger? _verboseFileLogger;
   Logger? _warningFileLogger;
   Logger? _downloadFileLogger;
+  bool _settingsLoaded = false;
+  Future<void> _fileOperations = Future<void>.value();
 
   LogPrinter devPrinter = PrettyPrinter(stackTraceBeginIndex: 0, methodCount: 6, levelEmojis: {Level.trace: '✔ '});
   LogPrinter prodPrinterWithBox = PrettyPrinter(stackTraceBeginIndex: 0, methodCount: 6, colors: false, printTime: true, levelEmojis: {Level.trace: '✔ '});
-  LogPrinter prodPrinterWithoutBox =
-      PrettyPrinter(stackTraceBeginIndex: 0, methodCount: 6, colors: false, noBoxingByDefault: true, levelEmojis: {Level.trace: '✔ '});
+  LogPrinter prodPrinterWithoutBox = PrettyPrinter(
+    stackTraceBeginIndex: 0,
+    methodCount: 6,
+    colors: false,
+    noBoxingByDefault: true,
+    levelEmojis: {Level.trace: '✔ '},
+  );
 
   @override
   List<JHLifeCircleBean> get initDependencies => [pathService];
 
   @override
   Future<void> doInitBean() async {
+    logDirPath = path.join(pathService.getVisibleDir().path, 'logs');
+
     PlatformDispatcher.instance.onError = (error, stack) {
       if (error is NotUploadException) {
         return true;
@@ -54,47 +61,80 @@ class LogService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
   }
 
   @override
-  Future<void> doAfterBeanReady() async {}
+  Future<void> doAfterBeanReady() async {
+    _settingsLoaded = true;
+  }
 
   /// For actions that print params
-  void trace(Object msg, [bool withStack = false]) async {
-    await _initLogger();
-    _consoleLogger?.t(msg, stackTrace: withStack ? null : StackTrace.empty);
-    _verboseFileLogger?.t(msg, stackTrace: withStack ? null : StackTrace.empty);
+  Future<void> trace(Object msg, [bool withStack = false]) {
+    return _write(Level.trace, msg, stackTrace: withStack ? null : StackTrace.empty);
   }
 
   /// For actions that is invisible to user
-  void debug(Object msg, [bool withStack = false]) async {
-    await _initLogger();
-    _consoleLogger?.d(msg, stackTrace: withStack ? null : StackTrace.empty);
-    _verboseFileLogger?.d(msg, stackTrace: withStack ? null : StackTrace.empty);
+  Future<void> debug(Object msg, [bool withStack = false]) {
+    return _write(Level.debug, msg, stackTrace: withStack ? null : StackTrace.empty);
   }
 
   /// For actions that is visible to user
-  void info(Object msg, [bool withStack = false]) async {
-    await _initLogger();
-    _consoleLogger?.i(msg, stackTrace: withStack ? null : StackTrace.empty);
-    _verboseFileLogger?.i(msg, stackTrace: withStack ? null : StackTrace.empty);
+  Future<void> info(Object msg, [bool withStack = false]) {
+    return _write(Level.info, msg, stackTrace: withStack ? null : StackTrace.empty);
   }
 
-  void warning(Object msg, [Object? error, bool withStack = false]) async {
-    await _initLogger();
-    _consoleLogger?.w(msg, error: error, stackTrace: withStack ? null : StackTrace.empty);
-    _verboseFileLogger?.w(msg, error: error, stackTrace: withStack ? null : StackTrace.empty);
-    _warningFileLogger?.w(msg, error: error, stackTrace: withStack ? null : StackTrace.empty);
+  Future<void> warning(Object msg, [Object? error, bool withStack = false]) {
+    return _write(Level.warning, msg, error: error, stackTrace: withStack ? null : StackTrace.empty);
   }
 
-  void error(Object msg, [Object? error, StackTrace? stackTrace]) async {
-    await _initLogger();
-    _consoleLogger?.e(msg, error: error, stackTrace: stackTrace);
-    _verboseFileLogger?.e(msg, error: error, stackTrace: stackTrace);
-    _warningFileLogger?.e(msg, error: error, stackTrace: stackTrace);
+  Future<void> error(Object msg, [Object? error, StackTrace? stackTrace]) {
+    return _write(Level.error, msg, error: error, stackTrace: stackTrace);
   }
 
-  void download(Object msg) async {
-    await _initLogger();
-    _consoleLogger?.t(msg, stackTrace: StackTrace.empty);
-    _downloadFileLogger?.t(msg, stackTrace: StackTrace.empty);
+  Future<void> download(Object msg) {
+    return _write(Level.trace, msg, stackTrace: StackTrace.empty, download: true);
+  }
+
+  Future<void> _write(Level level, Object msg, {Object? error, StackTrace? stackTrace, bool download = false}) async {
+    final message = _safeLogValue(msg);
+    final detail = _safeLogValue(error);
+    final console = _consoleLogger ??= Logger(printer: devPrinter);
+    await console.init;
+    console.log(level, message, error: detail, stackTrace: stackTrace);
+
+    if (!_settingsLoaded || advancedSetting.enableLogging.isFalse || logDirPath == null) {
+      return;
+    }
+    try {
+      await _withLogFiles(() async {
+        if (advancedSetting.enableLogging.isFalse) {
+          return;
+        }
+        await _initFileLoggers();
+        if (advancedSetting.enableLogging.isFalse) {
+          return;
+        }
+
+        if (download) {
+          if (advancedSetting.enableVerboseLogging.isTrue) {
+            _downloadFileLogger?.log(level, message, stackTrace: stackTrace);
+          }
+          return;
+        }
+        _verboseFileLogger!.log(level, message, error: detail, stackTrace: stackTrace);
+        if (advancedSetting.enableVerboseLogging.isTrue && level.index >= Level.warning.index) {
+          _warningFileLogger?.log(level, message, error: detail, stackTrace: stackTrace);
+        }
+      });
+    } on FileSystemException catch (e) {
+      console.w('Unable to write application logs', error: e.runtimeType);
+    }
+  }
+
+  Object? _safeLogValue(Object? value) {
+    return switch (value) {
+      DioException(:final type) => type,
+      FormatException() => value.runtimeType,
+      HttpException() => value.runtimeType,
+      _ => value,
+    };
   }
 
   Future<void> uploadError(dynamic throwable, {dynamic stackTrace, Map<String, dynamic>? extraInfos}) async {
@@ -102,22 +142,26 @@ class LogService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
   }
 
   Future<String> getSize() async {
-    return compute(
-      (logDirPath) {
-        Directory logDirectory = Directory(logDirPath!);
-        return logDirectory.exists().then<int>((exist) {
-          if (!exist) {
-            return 0;
-          }
+    final directory = logDirPath;
+    if (directory == null) {
+      return byte2String(0);
+    }
+    return compute((String logDirPath) {
+      Directory logDirectory = Directory(logDirPath);
+      return logDirectory
+          .exists()
+          .then<int>((exist) {
+            if (!exist) {
+              return 0;
+            }
 
-          return logDirectory.list().fold<int>(0, (previousValue, element) => previousValue += (element as File).lengthSync());
-        }).then<String>((totalBytes) => byte2String(totalBytes.toDouble()));
-      },
-      logDirPath,
-    );
+            return logDirectory.list().where((element) => element is File).fold<int>(0, (bytes, file) => bytes + (file as File).lengthSync());
+          })
+          .then<String>((totalBytes) => byte2String(totalBytes.toDouble()));
+    }, directory);
   }
 
-  Future<void> clear() async {
+  Future<void> clear() => _withLogFiles(() async {
     await _verboseFileLogger?.close();
     await _warningFileLogger?.close();
     await _downloadFileLogger?.close();
@@ -126,24 +170,23 @@ class LogService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
     _warningFileLogger = null;
     _downloadFileLogger = null;
 
-    if (await Directory(logDirPath!).exists()) {
-      await Directory(logDirPath!).delete(recursive: true);
+    final directory = logDirPath;
+    if (directory != null && await Directory(directory).exists()) {
+      await Directory(directory).delete(recursive: true);
     }
+  });
+
+  Future<void> _withLogFiles(Future<void> Function() action) {
+    final operation = _fileOperations.then((_) => action());
+    _fileOperations = operation.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return operation;
   }
 
-  Future<void> _initLogDir() async {
-    if (logDirPath == null) {
-      logDirPath = path.join(pathService.getVisibleDir().path, 'logs');
-      if (!await Directory(logDirPath!).exists()) {
-        await Directory(logDirPath!).create();
-      }
+  Future<void> _initFileLoggers() async {
+    if (_verboseFileLogger != null && (advancedSetting.enableVerboseLogging.isFalse || _warningFileLogger != null)) {
+      return;
     }
-  }
-
-  Future<void> _initLogger() async {
-    _consoleLogger ??= Logger(printer: devPrinter);
-
-    await _initLogDir();
+    await Directory(logDirPath!).create(recursive: true);
     String fileName = DateFormat('yyyy-MM-dd_HH-mm-ss').format(DateTime.now());
 
     _verboseFileLogger ??= Logger(
@@ -166,7 +209,6 @@ class LogService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
     }
 
     await Future.wait([
-      _consoleLogger!.init,
       _verboseFileLogger!.init,
       if (_warningFileLogger != null) _warningFileLogger!.init,
       if (_downloadFileLogger != null) _downloadFileLogger!.init,
@@ -181,29 +223,5 @@ class EHLogFilter extends LogFilter {
       return event.level.index >= level!.index;
     }
     return event.level.index >= level!.index && event.level != Level.trace;
-  }
-}
-
-T callWithParamsUploadIfErrorOccurs<T>(T Function() func, {dynamic params, T? defaultValue}) {
-  try {
-    return func.call();
-  } on Exception catch (e) {
-    if (e is DioException || e is EHSiteException) {
-      rethrow;
-    }
-
-    log.error('operationFailed'.tr, e);
-    log.uploadError(e, extraInfos: {'params': params});
-    if (defaultValue == null) {
-      throw NotUploadException(e);
-    }
-    return defaultValue;
-  } on Error catch (e) {
-    log.error('operationFailed'.tr, e);
-    log.uploadError(e, extraInfos: {'params': params});
-    if (defaultValue == null) {
-      throw NotUploadException(e);
-    }
-    return defaultValue;
   }
 }

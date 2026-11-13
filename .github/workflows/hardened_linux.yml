@@ -34,6 +34,8 @@ jobs:
       run:
         shell: bash
     env:
+      CI: 'true'
+      FLUTTER_SUPPRESS_ANALYTICS: 'true'
       FLUTTER_VERSION: 3.44.8
       FLUTTER_COMMIT: 058e0af2c2b57e369d905a03ac9748b0ebf543c6
 
@@ -70,6 +72,16 @@ jobs:
             exit 1
           fi
 
+          if grep -R -nE 'badCertificateCallback|onBadCertificate|enableDomainFronting|domainFrontingExtraKey' lib; then
+            echo "::error::TLS verification override or legacy domain fronting reappeared"
+            exit 1
+          fi
+
+          if grep -R -nE 'parse2Cookies error:|saveUserInfo:|saveEncryptedPassword:|saveApiKey:|saveConfig: type=' lib; then
+            echo "::error::Sensitive credential logging reappeared"
+            exit 1
+          fi
+
       - name: Select Xcode
         if: runner.os == 'macOS'
         run: |
@@ -100,6 +112,10 @@ jobs:
 
       - name: Resolve Dart dependencies
         run: flutter pub get --enforce-lockfile
+
+      - name: Run Flutter tests
+        if: runner.os == 'Linux'
+        run: flutter test --no-pub
 
       - name: Build Linux release
         if: runner.os == 'Linux'

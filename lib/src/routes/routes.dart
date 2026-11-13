@@ -117,7 +117,6 @@ class Routes {
   static const String blockingRules = "/setting_preference/blockingRules";
   static const String configureBlockingRules = "/setting_preference/blockRules/configureBlockingRules";
 
-  static const String hostMapping = "/setting_network/hostMapping";
   static const String proxy = "/setting_network/proxy";
 
   static const String extraGalleryScanPath = "/setting_download/extraGalleryScanPath";
