@@ -12,6 +12,21 @@ class HardenedUpdate {
   const HardenedUpdate(this.version, this.page);
 
   static String artifactsUrl(int runId) => '$_api/$runId/artifacts';
+  static String jobsUrl(int runId) => '$_api/$runId/jobs';
+
+  static bool completedBuildsWithUnstartedSmoke(Object? data) {
+    if (data is! Map || data['jobs'] is! List) {
+      return false;
+    }
+    final jobs = (data['jobs'] as List).whereType<Map>();
+    bool succeeded(String name) => jobs.any((job) => job['name'] == name && job['conclusion'] == 'success');
+    return succeeded('macOS arm64') &&
+        succeeded('Linux x64') &&
+        jobs.any((job) {
+          final steps = job['steps'];
+          return job['name'] == 'Launch macOS on Apple silicon' && job['conclusion'] == 'cancelled' && steps is List && steps.isEmpty;
+        });
+  }
 
   static HardenedUpdate? findLatest(Object? data, {required int runId, required String platform}) {
     if (data is! Map || data['artifacts'] is! List) {

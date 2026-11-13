@@ -257,7 +257,7 @@ jobs:
   smoke-macos:
     name: Launch macOS on Apple silicon
     needs: build
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 15
     permissions: {}
     steps:
@@ -270,6 +270,7 @@ jobs:
 
       - name: Verify and start the packaged app
         shell: bash
+        timeout-minutes: 3
         run: |
           set -euo pipefail
           test "$(uname -m)" = arm64
@@ -280,16 +281,15 @@ jobs:
           hdiutil attach -readonly -nobrowse -mountpoint "$mount" ./*.dmg
           app="$mount/JHenTai.app"
           codesign --verify --deep --strict "$app"
-          "$app/Contents/MacOS/jhentai-ech" --version
-          "$app/Contents/MacOS/jhentai" > "$RUNNER_TEMP/jhentai-launch.log" 2>&1 &
-          pid=$!
-          for ((second=0; second<12; second++)); do
-            if ! kill -0 "$pid" 2>/dev/null; then
-              cat "$RUNNER_TEMP/jhentai-launch.log"
-              exit 1
-            fi
-            sleep 1
+          stdout_log="$RUNNER_TEMP/jhentai-launch.out"
+          stderr_log="$RUNNER_TEMP/jhentai-launch.err"
+          touch "$stdout_log" "$stderr_log"
+          open -n -F -W --stdout "$stdout_log" --stderr "$stderr_log" "$app" --args --verify-ech-helper
+          grep -Fx 'Application rendered its first frame and launched the ECH client' "$stdout_log"
+
+      - name: Show application startup diagnostics
+        if: failure()
+        run: |
+          for log in "$RUNNER_TEMP/jhentai-launch.out" "$RUNNER_TEMP/jhentai-launch.err"; do
+            if [[ -f "$log" ]]; then tail -n 80 "$log"; fi
           done
-          kill "$pid"
-          wait "$pid" || true
-          echo "Packaged application stayed running on Apple silicon"

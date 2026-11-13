@@ -34,6 +34,15 @@ class ExEchAdapter implements HttpClientAdapter {
   static bool get isAvailable => (Platform.isMacOS || Platform.isLinux) && File(_helperPath).existsSync();
   static String get _helperPath => path.join(path.dirname(Platform.resolvedExecutable), 'jhentai-ech');
 
+  static Future<bool> checkPackagedHelper() async {
+    try {
+      final result = await Process.run(_helperPath, const ['--version'], includeParentEnvironment: false);
+      return result.exitCode == 0 && result.stdout.toString().trim() == 'jhentai-ech 1';
+    } on ProcessException {
+      return false;
+    }
+  }
+
   @override
   Future<ResponseBody> fetch(RequestOptions options, Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async {
     if (!networkSetting.enableExEch.value || options.uri.host != _host) {

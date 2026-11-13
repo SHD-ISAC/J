@@ -54,6 +54,7 @@ import 'package:jhentai/src/widget/app_manager.dart';
 
 import 'config/theme_config.dart';
 import 'network/archive_bot_request.dart';
+import 'network/ex_ech_adapter.dart';
 
 List<JHLifeCircleBean> lifeCircleBeans = [
   ehRequest,
@@ -119,6 +120,17 @@ void main(List<String> args) async {
   }
 
   runApp(const MyApp());
+
+  if (Platform.isMacOS && args.length == 1 && args.single == '--verify-ech-helper') {
+    await WidgetsBinding.instance.waitUntilFirstFrameRasterized;
+    if (!await ExEchAdapter.checkPackagedHelper()) {
+      stderr.writeln('Cannot start the bundled ECH client from the application sandbox');
+      exit(1);
+    }
+    stdout.writeln('Application rendered its first frame and launched the ECH client');
+    await stdout.flush();
+    exit(0);
+  }
 }
 
 class MyApp extends StatelessWidget {

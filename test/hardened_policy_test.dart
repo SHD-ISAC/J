@@ -125,6 +125,27 @@ void main() {
     expect(HardenedUpdate.findLatest(artifacts, runId: 123, platform: 'macOS-arm64'), isNull);
   });
 
+  test('runner acquisition failure can leave both desktop packages usable', () {
+    final smokeJob = {
+      'name': 'Launch macOS on Apple silicon',
+      'conclusion': 'cancelled',
+      'steps': <Object>[],
+    };
+    final jobs = {
+      'jobs': [
+        {'name': 'Linux x64', 'conclusion': 'success'},
+        {'name': 'macOS arm64', 'conclusion': 'success'},
+        smokeJob,
+      ],
+    };
+    expect(HardenedUpdate.completedBuildsWithUnstartedSmoke(jobs), isTrue);
+    smokeJob['steps'] = [{'name': 'Verify and start the packaged app', 'conclusion': 'cancelled'}];
+    expect(HardenedUpdate.completedBuildsWithUnstartedSmoke(jobs), isFalse);
+    smokeJob['conclusion'] = 'failure';
+    smokeJob['steps'] = [];
+    expect(HardenedUpdate.completedBuildsWithUnstartedSmoke(jobs), isFalse);
+  });
+
   test('logs rotate and prune expired files', () async {
     final dir = await Directory.systemTemp.createTemp('jhentai-log-test');
     addTearDown(() => dir.delete(recursive: true));

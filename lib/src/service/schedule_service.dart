@@ -73,32 +73,44 @@ class ScheduleService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBea
     try {
       final response = await ehRequest.get<Response>(
         url: HardenedUpdate.workflowRuns,
-        queryParameters: {'branch': HardenedUpdate.branch, 'status': 'success', 'per_page': 1},
+        queryParameters: {'branch': HardenedUpdate.branch, 'status': 'completed', 'per_page': 5},
       );
       final runs = response.data;
       if (runs is! Map || runs['workflow_runs'] is! List) {
         return;
       }
-      final run = (runs['workflow_runs'] as List).whereType<Map>().firstOrNull;
-      final runId = run?['id'];
-      if (runId is! int || runId <= 0) {
-        return;
+      HardenedUpdate? update;
+      for (final run in (runs['workflow_runs'] as List).whereType<Map>()) {
+        final runId = run['id'];
+        if (runId is! int || runId <= 0) {
+          continue;
+        }
+        if (run['conclusion'] == 'cancelled') {
+          final jobs = await ehRequest.get<Response>(url: HardenedUpdate.jobsUrl(runId));
+          if (!HardenedUpdate.completedBuildsWithUnstartedSmoke(jobs.data)) {
+            continue;
+          }
+        } else if (run['conclusion'] != 'success') {
+          continue;
+        }
+        final artifacts = await ehRequest.get<Response>(url: HardenedUpdate.artifactsUrl(runId));
+        update = HardenedUpdate.findLatest(artifacts.data, runId: runId, platform: platform);
+        if (update != null) {
+          break;
+        }
       }
-      final artifacts = await ehRequest.get<Response>(url: HardenedUpdate.artifactsUrl(runId));
-      final release = HardenedUpdate.findLatest(artifacts.data, runId: runId, platform: platform);
-      if (release == null || await localConfigService.read(configKey: ConfigEnum.dismissVersion) == release.version) {
+      if (update == null || await localConfigService.read(configKey: ConfigEnum.dismissVersion) == update.version) {
         return;
       }
 
       final package = await PackageInfo.fromPlatform();
       final currentVersion = '${package.version}+${package.buildNumber}';
-      if (compareBuildVersions(currentVersion, release.version) >= 0) {
+      if (compareBuildVersions(currentVersion, update.version) >= 0) {
         return;
       }
 
-      SchedulerBinding.instance.addPostFrameCallback((_) {
-        Get.dialog(UpdateDialog(currentVersion: currentVersion, latestVersion: release.version, releasePage: release.page));
-      });
+      final dialog = UpdateDialog(currentVersion: currentVersion, latestVersion: update.version, releasePage: update.page);
+      SchedulerBinding.instance.addPostFrameCallback((_) => Get.dialog(dialog));
     } catch (error) {
       log.info('Update check failed: ${error.runtimeType}');
     }
