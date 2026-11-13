@@ -92,15 +92,23 @@ jobs:
           echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
           DEVELOPER_DIR="$developer_dir" xcodebuild -version
 
-      - name: Install pinned Flutter
+      - name: Fetch pinned Flutter source
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           sdk="$RUNNER_TEMP/flutter"
           git init --quiet "$sdk"
           git -C "$sdk" remote add origin https://github.com/flutter/flutter.git
-          git -C "$sdk" fetch --depth=1 origin "refs/tags/$FLUTTER_VERSION:refs/tags/$FLUTTER_VERSION"
+          git -C "$sdk" -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=45 \
+            fetch --depth=1 origin "refs/tags/$FLUTTER_VERSION:refs/tags/$FLUTTER_VERSION"
           test "$(git -C "$sdk" rev-parse "$FLUTTER_VERSION^{commit}")" = "$FLUTTER_COMMIT"
           git -C "$sdk" checkout --quiet --detach "$FLUTTER_COMMIT"
+
+      - name: Initialize the Flutter and Dart SDK
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          sdk="$RUNNER_TEMP/flutter"
           "$sdk/bin/flutter" --disable-analytics
           "$sdk/bin/flutter" --version
           echo "$sdk/bin" >> "$GITHUB_PATH"
