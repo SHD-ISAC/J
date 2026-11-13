@@ -23,6 +23,15 @@ class ReadProgressService extends GetxController with JHLifeCircleBeanErrorCatch
   @override
   Future<void> doAfterBeanReady() async {}
 
+  void invalidateImportedProgress(Set<String> recordKeys) {
+    for (final key in recordKeys) {
+      _progressCache.remove(key);
+    }
+    if (recordKeys.isNotEmpty) {
+      updateSafely(recordKeys.map((key) => '$readProgressUpdateId::$key').toList());
+    }
+  }
+
   /// Get read progress for a gallery with cache
   Future<int> getReadProgress(int gid) async {
     // Return from cache if available

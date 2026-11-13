@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:jhentai/src/service/local_config_service.dart';
+import 'package:jhentai/src/utils/toast_util.dart';
 import 'package:get/get.dart';
 import 'package:jhentai/src/extension/widget_extension.dart';
 import 'package:jhentai/src/setting/archive_bot_setting.dart';
@@ -145,6 +147,9 @@ class _EHArchiveBotSettingDialogState extends State<EHArchiveBotSettingDialog> {
       leading: Text('apiKey'.tr, style: const TextStyle(fontSize: 14)),
       title: TextField(
         controller: _apiKeyController,
+        obscureText: true,
+        enableSuggestions: false,
+        autocorrect: false,
         decoration: InputDecoration(
           border: const OutlineInputBorder(),
           constraints: const BoxConstraints(minWidth: 400),
@@ -167,15 +172,21 @@ class _EHArchiveBotSettingDialogState extends State<EHArchiveBotSettingDialog> {
     );
   }
 
-  void _onConfirm() {
+  Future<void> _onConfirm() async {
     final String? address = _apiAddressController.text.isBlank! ? null : _apiAddressController.text;
     final String? key = _apiKeyController.text.isBlank! ? null : _apiKeyController.text;
 
-    archiveBotSetting.saveConfig(
-      type: _botType,
-      address: address,
-      key: key,
-    );
-    backRoute(result: true);
+    try {
+      await archiveBotSetting.saveConfig(type: _botType, address: address, key: key);
+    } on SecureConfigException {
+      toast('secureStorageUnavailable'.tr);
+      return;
+    } on FormatException {
+      toast('archiveBotHttpsRequired'.tr);
+      return;
+    }
+    if (mounted) {
+      backRoute(result: true);
+    }
   }
 }

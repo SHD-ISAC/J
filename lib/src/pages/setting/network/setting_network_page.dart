@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import 'package:jhentai/src/config/ui_config.dart';
 import 'package:jhentai/src/extension/widget_extension.dart';
 import 'package:jhentai/src/setting/network_setting.dart';
+import 'package:jhentai/src/network/ex_ech_adapter.dart';
 
 import '../../../routes/routes.dart';
 import '../../../utils/route_util.dart';
@@ -23,6 +24,18 @@ class SettingNetworkPage extends StatelessWidget {
             padding: const EdgeInsets.only(top: 16),
             children: [
               _buildProxyAddress(),
+              if (ExEchAdapter.isAvailable)
+                SwitchListTile(
+                  title: Text('enableExEch'.tr),
+                  subtitle: Text(networkSetting.enableExEch.value
+                      ? "${'lastExConnection'.tr} · ${exEchStatus.value.statusKey.tr}"
+                      : 'echDescription'.tr),
+                  value: networkSetting.enableExEch.value,
+                  onChanged: (value) {
+                    exEchStatus.value = ExEchStatus.unused;
+                    networkSetting.saveEnableExEch(value);
+                  },
+                ),
               _buildPageCacheMaxAge(),
               _buildCacheImageExpireDuration(),
               _buildTimeoutTile(
@@ -237,4 +250,12 @@ class _TimeoutSettingDialogState extends State<_TimeoutSettingDialog> {
     }
     backRoute(result: parsed);
   }
+}
+
+extension on ExEchStatus {
+  String get statusKey => switch (this) {
+    ExEchStatus.unused => 'echUnused',
+    ExEchStatus.accepted => 'echAccepted',
+    ExEchStatus.failed => 'echFailed',
+  };
 }

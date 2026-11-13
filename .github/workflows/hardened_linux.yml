@@ -36,6 +36,7 @@ jobs:
     env:
       CI: 'true'
       FLUTTER_SUPPRESS_ANALYTICS: 'true'
+      GO_VERSION: 1.26.11
       FLUTTER_VERSION: 3.44.8
       FLUTTER_COMMIT: 058e0af2c2b57e369d905a03ac9748b0ebf543c6
 
@@ -72,7 +73,7 @@ jobs:
             exit 1
           fi
 
-          if grep -R -nE 'badCertificateCallback|onBadCertificate|enableDomainFronting|domainFrontingExtraKey' lib; then
+          if grep -R -nE 'badCertificateCallback|onBadCertificate|enableDomainFronting|domainFrontingExtraKey|InsecureSkipVerify|EncryptedClientHelloRejectionVerify' lib native/ech third_party/j_downloader/lib; then
             echo "::error::TLS verification override or legacy domain fronting reappeared"
             exit 1
           fi
@@ -104,11 +105,44 @@ jobs:
           "$sdk/bin/flutter" --version
           echo "$sdk/bin" >> "$GITHUB_PATH"
 
+      - name: Build the ECH client
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            platform=darwin
+            target=arm64
+            if [[ "$(uname -m)" == arm64 ]]; then
+              host=arm64
+              digest=e3a42e67a7a8acf450ebada2b074c7ca863000ca514907b7185b45e8f5cdff57
+            else
+              host=amd64
+              digest=394baae971332f2bc783d6e2004ae57101479bd3b06ed8209a3fe3570d4ce498
+            fi
+          else
+            platform=linux
+            host=amd64
+            target=amd64
+            digest=9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec
+          fi
+          archive="$RUNNER_TEMP/go.tar.gz"
+          curl --fail --silent --show-error --location --retry 2 \
+            "https://go.dev/dl/go${GO_VERSION}.${platform}-${host}.tar.gz" -o "$archive"
+          printf '%s  %s\n' "$digest" "$archive" | shasum -a 256 -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          go="$RUNNER_TEMP/go/bin/go"
+          export GOTOOLCHAIN=local GOPROXY=off CGO_ENABLED=0
+          cd native/ech
+          "$go" test ./...
+          GOOS="$platform" GOARCH="$target" "$go" build -trimpath -ldflags='-s -w' -o "$RUNNER_TEMP/jhentai-ech" .
+          if [[ "$host" == "$target" ]]; then
+            "$RUNNER_TEMP/jhentai-ech" --version
+          fi
+
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y ninja-build libfuse2 webkit2gtk-4.1
+          sudo apt-get install -y ninja-build libfuse2 webkit2gtk-4.1 libsecret-1-dev libsqlite3-dev
 
       - name: Resolve Dart dependencies
         run: flutter pub get --enforce-lockfile
@@ -137,6 +171,7 @@ jobs:
           mkdir -p "$ROOT/usr/share/icons/hicolor/512x512/apps"
 
           cp -r "build/linux/${ARCH}/release/bundle/." "$ROOT/opt/jhentai/"
+          install -m 0755 "$RUNNER_TEMP/jhentai-ech" "$ROOT/opt/jhentai/jhentai-ech"
           cp -r linux/assets/DEBIAN "$ROOT/DEBIAN"
           chmod 0755 "$ROOT/DEBIAN/postinst" "$ROOT/DEBIAN/postrm"
 
@@ -161,7 +196,7 @@ jobs:
       - name: Package and verify macOS DMG
         if: runner.os == 'macOS'
         id: dmg
-        run: bash script/build_hardened_macos_dmg.sh
+        run: bash script/build_hardened_macos_dmg.sh "$RUNNER_TEMP/jhentai-ech"
 
       - name: Verify built binary policy
         env:
@@ -187,6 +222,13 @@ jobs:
             exit 1
           fi
 
+      - name: Read package version
+        id: version
+        run: |
+          version="$(awk '/^version:/ {print $2; exit}' pubspec.yaml)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
       - name: Generate SHA-256
         id: checksum
         env:
@@ -206,8 +248,48 @@ jobs:
       - name: Upload hardened artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: ${{ matrix.artifact }}
+          name: ${{ matrix.artifact }}-${{ steps.version.outputs.value }}
           path: |
             ${{ steps.deb.outputs.package || steps.dmg.outputs.package }}
             ${{ steps.checksum.outputs.file }}
           if-no-files-found: error
+
+  smoke-macos:
+    name: Launch macOS on Apple silicon
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 15
+    permissions: {}
+    steps:
+      - name: Download the packaged macOS build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: JHenTai-Hardened-macOS-arm64-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/jhentai-dmg
+
+      - name: Verify and start the packaged app
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          cd "$RUNNER_TEMP/jhentai-dmg"
+          shasum -a 256 -c SHA256SUMS
+          mount=$(mktemp -d)
+          trap 'hdiutil detach "$mount" >/dev/null || true; rmdir "$mount" || true' EXIT
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount" ./*.dmg
+          app="$mount/JHenTai.app"
+          codesign --verify --deep --strict "$app"
+          "$app/Contents/MacOS/jhentai-ech" --version
+          "$app/Contents/MacOS/jhentai" > "$RUNNER_TEMP/jhentai-launch.log" 2>&1 &
+          pid=$!
+          for ((second=0; second<12; second++)); do
+            if ! kill -0 "$pid" 2>/dev/null; then
+              cat "$RUNNER_TEMP/jhentai-launch.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          kill "$pid"
+          wait "$pid" || true
+          echo "Packaged application stayed running on Apple silicon"

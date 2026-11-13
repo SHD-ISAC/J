@@ -7,84 +7,139 @@ import '../consts/eh_consts.dart';
 import '../enum/config_enum.dart';
 import '../service/local_config_service.dart';
 import '../utils/cookie_util.dart';
+import 'eh_cache_manager.dart';
 
 class EHCookieManager extends Interceptor {
-  final LocalConfigService localConfigService;
+  static const _requestSession = 'ehCookieSession';
 
-  List<Cookie> cookies = [Cookie('nw', '1'), Cookie('datatags', '1')];
+  final LocalConfigService localConfigService;
+  Future<void> _pendingWrite = Future<void>.value();
+  int _session = 0;
+  int _logoutRequests = 0;
+  final String _cacheRunPrefix = DateTime.now().microsecondsSinceEpoch.toString();
+  List<Cookie> cookies = _defaultCookies();
+
+  int get session => _session;
+  String get cacheSession => '$_cacheRunPrefix:$_session';
 
   EHCookieManager(this.localConfigService);
 
+  static List<Cookie> _defaultCookies() => [Cookie('nw', '1'), Cookie('datatags', '1')];
+
   Future<void> initCookies() async {
-    String? string = await localConfigService.read(configKey: ConfigEnum.ehCookie);
-    if (string != null) {
-      List list = jsonDecode(string);
-      cookies.addAll(list.cast<String>().map(Cookie.fromSetCookieValue).toList());
+    try {
+      final value = await localConfigService.read(configKey: ConfigEnum.ehCookie);
+      if (value != null) {
+        final list = jsonDecode(value);
+        if (list is List) {
+          cookies.addAll(CookieUtil.parseSetCookieHeaders(list.whereType<String>()));
+        }
+      }
+    } on FormatException {
+      // An unreadable legacy cookie file must not block anonymous requests.
     }
   }
 
-  Future<void> replaceCookies(List<Cookie> cookies) async {
-    this.cookies.removeWhere((cookie) => cookies.any((c) => c.name == cookie.name));
-    this.cookies.addAll(cookies);
+  Future<void> storeEHCookies(List<Cookie> newCookies, {bool replaceAccount = false, int? requestSession}) {
+    if (_logoutRequests > 0 || (requestSession != null && requestSession != _session)) {
+      return Future<void>.value();
+    }
+    final incoming = <String, Cookie>{
+      for (final cookie in newCookies)
+        if (cookie.name != '__utmp' && (cookie.name != 'igneous' || cookie.value != 'mystery')) cookie.name: cookie,
+    };
+    final previousMember = cookies.where((cookie) => cookie.name == 'ipb_member_id').firstOrNull?.value;
+    final newMember = incoming['ipb_member_id']?.value;
+    final accountChanged = replaceAccount || (newMember != null && previousMember != newMember);
+    final current = accountChanged ? _defaultCookies() : cookies;
+    if (accountChanged) {
+      ++_session;
+    }
 
-    List<Cookie> storeCookies = List.from(this.cookies)..removeWhere((cookie) => cookie.name == 'nw' || cookie.name == 'datatags');
-    await localConfigService.write(configKey: ConfigEnum.ehCookie, value: jsonEncode(storeCookies.map((cookie) => cookie.toString()).toList()));
+    final updated = <String, Cookie>{for (final cookie in current) cookie.name: cookie}..addAll(incoming);
+    if (!accountChanged && updated.length == cookies.length && cookies.every((cookie) => updated[cookie.name]?.value == cookie.value)) {
+      return Future<void>.value();
+    }
+    final values = updated.values.toList();
+    final generation = _session;
+    final previous = cookies;
+    cookies = values;
+    return _persistCookies().catchError((Object error, StackTrace stack) {
+      if (_session == generation && identical(cookies, values)) {
+        cookies = previous;
+        ++_session;
+      }
+      Error.throwWithStackTrace(error, stack);
+    });
   }
 
-  Future<void> removeCookies(List<String> cookieNames) async {
-    cookies.removeWhere((cookie) => cookieNames.any((name) => cookie.name == name));
+  Future<void> removeCookies(List<String> cookieNames) {
+    final updated = cookies.where((cookie) => !cookieNames.contains(cookie.name)).toList();
+    if (updated.length == cookies.length) {
+      return Future<void>.value();
+    }
+    cookies = updated;
+    return _persistCookies();
+  }
 
-    List<Cookie> storeCookies = List.from(cookies)..removeWhere((cookie) => cookie.name == 'nw' || cookie.name == 'datatags');
-    await localConfigService.write(configKey: ConfigEnum.ehCookie, value: jsonEncode(storeCookies.map((cookie) => cookie.toString()).toList()));
+  Future<void> _persistCookies() {
+    final stored = cookies.where((cookie) => cookie.name != 'nw' && cookie.name != 'datatags');
+    final value = jsonEncode(stored.map((cookie) => cookie.toString()).toList());
+    final isEmpty = stored.isEmpty;
+    return _serializeWrite(() async {
+      if (isEmpty) {
+        await localConfigService.delete(configKey: ConfigEnum.ehCookie);
+      } else {
+        await localConfigService.write(configKey: ConfigEnum.ehCookie, value: value);
+      }
+    });
+  }
+
+  Future<T> _serializeWrite<T>(Future<T> Function() action) {
+    final result = _pendingWrite.then((_) => action());
+    _pendingWrite = result.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return result;
   }
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
-    try {
-      if (_isTrustedCookieOrigin(options.uri)) {
-        options.headers[HttpHeaders.cookieHeader] = CookieUtil.parse2String(cookies);
-      }
-      handler.next(options);
-    } on Exception catch (e, stackTrace) {
-      var err = DioException(requestOptions: options, error: e, stackTrace: stackTrace);
-      handler.reject(err, true);
+    options.extra[_requestSession] = _session;
+    options.extra[EHCacheManager.requestCacheSessionKey] = cacheSession;
+    if (_isTrustedCookieOrigin(options.uri) && _logoutRequests == 0) {
+      options.headers[HttpHeaders.cookieHeader] = CookieUtil.parse2String(cookies);
     }
+    handler.next(options);
   }
 
   @override
   void onResponse(Response response, ResponseInterceptorHandler handler) async {
     try {
-      await _saveEHCookies(response);
+      final headers = response.headers[HttpHeaders.setCookieHeader];
+      final requestSession = response.requestOptions.extra[_requestSession];
+      if (headers != null && requestSession == _session && !response.extra.containsKey(CacheResponse.extraKey) && isTrustedResponse(response)) {
+        final cookies = CookieUtil.parseSetCookieHeaders(headers).map((cookie) => Cookie(cookie.name, cookie.value)).toList();
+        if (cookies.isNotEmpty) {
+          await storeEHCookies(cookies, requestSession: requestSession as int);
+        }
+      }
       handler.next(response);
-    } on Exception catch (e, s) {
-      final err = DioException(requestOptions: response.requestOptions, error: e, stackTrace: s);
-      return handler.reject(err, true);
+    } catch (error, stackTrace) {
+      handler.reject(DioException(requestOptions: response.requestOptions, error: error, stackTrace: stackTrace));
     }
-  }
-
-  Future<void> storeEHCookies(List<Cookie> cookies) async {
-    /// https://github.com/Ehviewer-Overhauled/Ehviewer/issues/873
-    cookies.removeWhere((cookie) => cookie.name == '__utmp');
-    cookies.removeWhere((cookie) => cookie.name == 'igneous' && cookie.value == 'mystery');
-    await replaceCookies(cookies);
   }
 
   Future<bool> removeAllCookies() async {
-    bool success = await localConfigService.delete(configKey: ConfigEnum.ehCookie);
-    cookies = [Cookie('nw', '1'), Cookie('datatags', '1')];
-    return success;
-  }
-
-  Future<void> _saveEHCookies(Response response) async {
-    final headers = response.headers[HttpHeaders.setCookieHeader];
-    if (headers == null || !isTrustedResponse(response)) {
-      return;
-    }
-
-    final cookies = CookieUtil.parseSetCookieHeaders(headers).map((cookie) => Cookie(cookie.name, cookie.value)).toList();
-    if (cookies.isNotEmpty) {
-      await storeEHCookies(cookies);
-    }
+    _logoutRequests++;
+    ++_session;
+    cookies = _defaultCookies();
+    return _serializeWrite(() async {
+      try {
+        return await localConfigService.delete(configKey: ConfigEnum.ehCookie);
+      } finally {
+        ++_session;
+        _logoutRequests--;
+      }
+    });
   }
 
   static bool isTrustedResponse(Response response) {

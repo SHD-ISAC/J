@@ -3,7 +3,6 @@ import 'dart:ui';
 import 'package:dio/dio.dart';
 import 'package:get/get.dart';
 import 'package:jhentai/src/database/database.dart';
-import 'package:jhentai/src/extension/dio_exception_extension.dart';
 import 'package:jhentai/src/setting/user_setting.dart';
 import 'package:retry/retry.dart';
 
@@ -56,7 +55,7 @@ class MyTagsSetting with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean 
         maxAttempts: 3,
       );
     } on DioException catch (e) {
-      log.error('getTagSetFailed'.tr, e.errorMsg);
+      log.error('getTagSetFailed'.tr, e);
       return;
     } on EHSiteException catch (e) {
       log.error('getTagSetFailed'.tr, e.message);
@@ -97,7 +96,7 @@ class MyTagsSetting with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean 
         maxAttempts: 3,
       );
     } on DioException catch (e) {
-      log.error('getTagSetFailed'.tr, e.errorMsg);
+      log.error('getTagSetFailed'.tr, e);
       return;
     } on EHSiteException catch (e) {
       log.error('getTagSetFailed'.tr, e.message);

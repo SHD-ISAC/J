@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:get/get.dart';
 import 'package:jhentai/src/enum/config_enum.dart';
-import 'package:jhentai/src/extension/dio_exception_extension.dart';
 import 'package:jhentai/src/network/eh_request.dart';
 import 'package:jhentai/src/setting/user_setting.dart';
 import 'package:jhentai/src/utils/eh_spider_parser.dart';
@@ -102,7 +101,7 @@ class SiteSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCircle
         maxAttempts: 3,
       );
     } on DioException catch (e) {
-      log.error('Fetch site setting from $site fail', e.errorMsg);
+      log.error('Fetch site setting from $site fail', e);
       return;
     } on EHSiteException catch (e) {
       log.error('Fetch site setting from $site fail', e.message);

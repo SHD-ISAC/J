@@ -30,6 +30,7 @@ import '../enum/config_enum.dart';
 import '../model/archive_bot_response/archive_bot_response.dart';
 import '../model/gallery_metadata.dart';
 import '../network/archive_bot_request.dart';
+import '../network/hardened_update.dart';
 import '../setting/advanced_setting.dart';
 import '../utils/version_util.dart';
 import '../widget/update_dialog.dart';
@@ -65,37 +66,42 @@ class ScheduleService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBea
       return;
     }
 
-    String url = 'https://api.github.com/repos/jiangtian616/JHenTai/releases';
-    String latestVersion;
-
+    if (!Platform.isMacOS && !Platform.isLinux) {
+      return;
+    }
+    final platform = Platform.isMacOS ? 'macOS-arm64' : 'Linux-x64';
     try {
-      latestVersion = (await retry(
-        () => ehRequest.get(url: url, parser: EHSpiderParser.githubReleasePage2LatestVersion),
-        maxAttempts: 3,
-      ))
-          .trim()
-          .split('+')[0];
-    } on Exception catch (_) {
-      log.info('check update failed');
-      return;
+      final response = await ehRequest.get<Response>(
+        url: HardenedUpdate.workflowRuns,
+        queryParameters: {'branch': HardenedUpdate.branch, 'status': 'success', 'per_page': 1},
+      );
+      final runs = response.data;
+      if (runs is! Map || runs['workflow_runs'] is! List) {
+        return;
+      }
+      final run = (runs['workflow_runs'] as List).whereType<Map>().firstOrNull;
+      final runId = run?['id'];
+      if (runId is! int || runId <= 0) {
+        return;
+      }
+      final artifacts = await ehRequest.get<Response>(url: HardenedUpdate.artifactsUrl(runId));
+      final release = HardenedUpdate.findLatest(artifacts.data, runId: runId, platform: platform);
+      if (release == null || await localConfigService.read(configKey: ConfigEnum.dismissVersion) == release.version) {
+        return;
+      }
+
+      final package = await PackageInfo.fromPlatform();
+      final currentVersion = '${package.version}+${package.buildNumber}';
+      if (compareBuildVersions(currentVersion, release.version) >= 0) {
+        return;
+      }
+
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        Get.dialog(UpdateDialog(currentVersion: currentVersion, latestVersion: release.version, releasePage: release.page));
+      });
+    } catch (error) {
+      log.info('Update check failed: ${error.runtimeType}');
     }
-
-    String? dismissVersion = await localConfigService.read(configKey: ConfigEnum.dismissVersion);
-    if (dismissVersion == latestVersion) {
-      return;
-    }
-
-    PackageInfo packageInfo = await PackageInfo.fromPlatform();
-    String currentVersion = 'v${packageInfo.version}'.trim();
-    log.info('Latest version:[$latestVersion], current version: [$currentVersion], current build: [${packageInfo.buildNumber}]');
-
-    if (compareVersion(currentVersion, latestVersion) >= 0) {
-      return;
-    }
-
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      Get.dialog(UpdateDialog(currentVersion: currentVersion, latestVersion: latestVersion));
-    });
   }
 
   Future<void> refreshGalleryTags() async {

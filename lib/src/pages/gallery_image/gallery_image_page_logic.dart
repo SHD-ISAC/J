@@ -73,7 +73,7 @@ class GalleryImagePageLogic extends GetxController {
         parser: EHSpiderParser.imagePage2GalleryUrl,
       );
     } on DioException catch (e) {
-      log.error('Get gallery image page info Failed', e.errorMsg, e.stackTrace);
+      log.error('Get gallery image page info Failed', e, e.stackTrace);
       snack('failed'.tr, e.errorMsg ?? '', isShort: true);
       state.loadingState = LoadingState.error;
       updateSafely();
@@ -97,7 +97,7 @@ class GalleryImagePageLogic extends GetxController {
       detailsPageInfo = await _getDetailsWithRedirectAndFallback(galleryUrl: galleryUrl);
       galleryUrl = detailsPageInfo.galleryDetails.galleryUrl;
     } on DioException catch (e) {
-      log.error('Get gallery detail failed in image page', e.errorMsg, e.stackTrace);
+      log.error('Get gallery detail failed in image page', e, e.stackTrace);
       snack('getGalleryDetailFailed'.tr, e.errorMsg ?? '', isShort: true);
       state.loadingState = LoadingState.error;
       updateSafely();

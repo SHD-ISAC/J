@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:get/get.dart';
 import 'package:jhentai/src/enum/config_enum.dart';
 import 'package:jhentai/src/service/log.dart';
+import 'package:jhentai/src/service/local_config_service.dart';
 
 import '../consts/archive_bot_consts.dart';
 import '../model/archive_bot_response/archive_resolve_vo.dart';
@@ -123,20 +124,23 @@ class ArchiveBotSetting with JHLifeCircleBeanWithConfigStorage implements JHLife
     String? address,
     String? key,
   }) async {
+    final endpoint = address?.trim();
+    if (endpoint != null && key != null) {
+      final uri = Uri.tryParse(endpoint);
+      if (uri == null || uri.scheme != 'https' || uri.host.isEmpty || uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment) {
+        throw const FormatException('Invalid archive bot HTTPS endpoint');
+      }
+    }
+    final config = {
+      'botType': type.code,
+      'apiAddress': endpoint,
+      'apiKey': key,
+      'preferBotSource': preferBotSource.value,
+    };
+    await localConfigService.write(configKey: configEnum, value: jsonEncode(config), replaceCredentials: true);
     botType.value = type;
-    apiAddress.value = address;
+    apiAddress.value = endpoint;
     apiKey.value = key;
-    await saveBeanConfig();
-  }
-
-  Future<void> saveApiAddress(String? value) async {
-    apiAddress.value = value;
-    await saveBeanConfig();
-  }
-
-  Future<void> saveApiKey(String? value) async {
-    apiKey.value = value;
-    await saveBeanConfig();
   }
 
   Future<void> savePreferBotSource(bool value) async {

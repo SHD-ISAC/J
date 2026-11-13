@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:get/get.dart';
 import 'package:jhentai/src/enum/config_enum.dart';
-import 'package:jhentai/src/extension/dio_exception_extension.dart';
 import 'package:jhentai/src/network/eh_request.dart';
 import 'package:jhentai/src/setting/user_setting.dart';
 import 'package:jhentai/src/service/log.dart';
@@ -103,7 +102,7 @@ class FavoriteSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCi
         maxAttempts: 3,
       );
     } on DioException catch (e) {
-      log.error('Fetch favorite setting from EH fail', e.errorMsg);
+      log.error('Fetch favorite setting from EH fail', e);
       return;
     } on EHSiteException catch (e) {
       log.error('Fetch favorite setting from EH fail', e.message);

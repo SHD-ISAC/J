@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:jhentai/src/extension/widget_extension.dart';
 import 'package:jhentai/src/utils/toast_util.dart';
+import 'package:jhentai/src/service/local_config_service.dart';
 
 import '../../../../setting/network_setting.dart';
 
@@ -27,10 +28,7 @@ class _SettingProxyPageState extends State<SettingProxyPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.save),
-            onPressed: () {
-              networkSetting.saveProxy(proxyType, proxyAddress, proxyUsername, proxyPassword);
-              toast('success'.tr);
-            },
+            onPressed: () => _saveProxy(notify: true),
           ),
         ],
       ),
@@ -42,10 +40,31 @@ class _SettingProxyPageState extends State<SettingProxyPage> {
             _buildProxyAddress(),
             _buildProxyUsername(),
             _buildProxyPassword(),
+            if (_isManualProxy)
+              SwitchListTile(
+                title: Text('allowProxyDirectFallback'.tr),
+                value: networkSetting.allowProxyDirectFallback.value,
+                onChanged: networkSetting.saveProxyDirectFallback,
+              ),
           ],
         ),
       ).withListTileTheme(context),
     );
+  }
+
+  bool get _isManualProxy => networkSetting.proxyType.value != JProxyType.system && networkSetting.proxyType.value != JProxyType.direct;
+
+  Future<void> _saveProxy({bool notify = false}) async {
+    try {
+      await networkSetting.saveProxy(proxyType, proxyAddress, proxyUsername, proxyPassword);
+      if (notify) {
+        toast('success'.tr);
+      }
+    } on SecureConfigException {
+      toast('secureStorageUnavailable'.tr);
+    } on FormatException {
+      toast('invalidProxyAddress'.tr);
+    }
   }
 
   Widget _buildProxyType() {
@@ -64,7 +83,7 @@ class _SettingProxyPageState extends State<SettingProxyPage> {
           ],
           onChanged: (JProxyType? value) {
             proxyType = value!;
-            networkSetting.saveProxy(proxyType, proxyAddress, proxyUsername, proxyPassword);
+            _saveProxy();
           },
         ),
       ),

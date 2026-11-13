@@ -580,7 +580,7 @@ class LoginPageLogic extends GetxController with GetSingleTickerProviderStateMix
 
     try {
       List<Cookie> cookies = CookieUtil.parse2Cookies(cookieString);
-      ehRequest.storeEHCookies(CookieUtil.parse2Cookies(cookieString));
+      await ehRequest.storeEHCookies(cookies, replaceAccount: true);
 
       int ipbMemberId = int.parse(cookies.firstWhere((cookie) => cookie.name == 'ipb_member_id').value);
       String ipbPassHash = cookies.firstWhere((cookie) => cookie.name == 'ipb_pass_hash').value;
@@ -625,7 +625,7 @@ class LoginPageLogic extends GetxController with GetSingleTickerProviderStateMix
 
     try {
       List<Cookie> cookies = CookieUtil.parse2Cookies(cookieString);
-      ehRequest.storeEHCookies(CookieUtil.parse2Cookies(cookieString));
+      await ehRequest.storeEHCookies(cookies, replaceAccount: true);
 
       int ipbMemberId = int.parse(cookies.firstWhere((cookie) => cookie.name == 'ipb_member_id').value);
       String ipbPassHash = cookies.firstWhere((cookie) => cookie.name == 'ipb_pass_hash').value;

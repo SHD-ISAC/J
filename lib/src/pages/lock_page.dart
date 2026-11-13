@@ -1,7 +1,8 @@
-import 'package:extended_image/extended_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:get/get.dart';
+import '../enum/config_enum.dart';
+import '../service/local_config_service.dart';
 import 'package:jhentai/src/mixin/window_widget_mixin.dart';
 import 'package:jhentai/src/routes/routes.dart';
 import 'package:jhentai/src/setting/security_setting.dart';
@@ -25,6 +26,7 @@ class LockPage extends StatefulWidget {
 
 class _LockPageState extends State<LockPage> with WindowListener, WindowWidgetMixin {
   String hintText = 'localizedReason'.tr;
+  bool _verifyingPin = false;
 
   TextEditingController controller = TextEditingController();
 
@@ -78,17 +80,7 @@ class _LockPageState extends State<LockPage> with WindowListener, WindowWidgetMi
                       height: UIConfig.lockPagePinCodeRegionWidth,
                       textStyle: TextStyle(fontSize: 24),
                     ),
-                    onCompleted: (String value) {
-                      if (keyToMd5(value) != securitySetting.encryptedPassword.value) {
-                        setState(() {
-                          controller.clear();
-                          hintText = 'passwordErrorHint'.tr;
-                        });
-                        return;
-                      }
-
-                      unlock();
-                    },
+                    onCompleted: _verifyPin,
                     closeKeyboardWhenCompleted: false,
                   ),
                 Container(
@@ -104,6 +96,31 @@ class _LockPageState extends State<LockPage> with WindowListener, WindowWidgetMi
         ),
       ),
     );
+  }
+
+  Future<void> _verifyPin(String value) async {
+    if (_verifyingPin) {
+      return;
+    }
+    _verifyingPin = true;
+    try {
+      final success = await securitySetting.verifyPassword(value);
+      if (!mounted) {
+        return;
+      }
+      if (success) {
+        unlock();
+      } else {
+        setState(() {
+          controller.clear();
+          hintText = localConfigService.credentialsAreLocked(ConfigEnum.securitySetting)
+              ? 'secureStorageUnavailable'.tr
+              : 'passwordErrorHint'.tr;
+        });
+      }
+    } finally {
+      _verifyingPin = false;
+    }
   }
 
   Future<void> biometricAuth() async {

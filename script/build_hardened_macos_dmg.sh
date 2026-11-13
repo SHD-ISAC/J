@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+helper="${1:?Pass the arm64 ECH executable}"
+test "$(lipo -archs "$helper")" = arm64
+
 app=build/macos/Build/Products/Release/jhentai.app
 plist="$app/Contents/Info.plist"
 binary=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$plist")
@@ -26,7 +29,13 @@ if grep -qx 'Signature=adhoc' <<< "$signature"; then
   entitlements="$work/adhoc-entitlements.plist"
   cp macos/Runner/Release.entitlements "$entitlements"
   /usr/libexec/PlistBuddy -c 'Add :com.apple.security.cs.disable-library-validation bool true' "$entitlements"
+  install -m 0755 "$helper" "$staged_app/Contents/MacOS/jhentai-ech"
+  codesign --force --sign - --timestamp=none --options runtime \
+    --entitlements macos/Runner/ECHHelper.entitlements "$staged_app/Contents/MacOS/jhentai-ech"
   codesign --force --sign - --timestamp=none --options runtime --entitlements "$entitlements" "$staged_app"
+else
+  echo "::error::Expected an ad-hoc signed app for the personal build"
+  exit 1
 fi
 ln -s /Applications "$work/staging/Applications"
 dmg="build/macos/JHenTai-$version-Hardened-macOS-arm64.dmg"

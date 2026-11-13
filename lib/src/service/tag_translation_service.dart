@@ -7,7 +7,6 @@ import 'package:get/get.dart';
 import 'package:jhentai/src/database/dao/tag_count_dao.dart';
 import 'package:jhentai/src/database/dao/tag_dao.dart';
 import 'package:jhentai/src/enum/eh_namespace.dart';
-import 'package:jhentai/src/extension/dio_exception_extension.dart';
 import 'package:jhentai/src/network/eh_request.dart';
 import 'package:jhentai/src/service/local_config_service.dart';
 import 'package:jhentai/src/service/tag_search_order_service.dart';
@@ -95,7 +94,7 @@ class TagTranslationService with JHLifeCircleBeanErrorCatch implements JHLifeCir
         onRetry: (error) => log.warning('Download tag translation data failed, retry.'),
       );
     } on DioException catch (e) {
-      log.error('Download tag translation data failed after 5 times', e.errorMsg);
+      log.error('Download tag translation data failed after 5 times', e);
       loadingState.value = LoadingState.error;
       await localConfigService.write(configKey: ConfigEnum.tagTranslationServiceLoadingState, value: loadingState.value.index.toString());
       return;

@@ -71,7 +71,7 @@ class ThumbnailsPageLogic extends GetxController with Scroll2TopLogicMixin, Gall
         parser: EHSpiderParser.detailPage2RangeAndThumbnails,
       );
     } on DioException catch (e) {
-      log.error('failToGetThumbnails'.tr, e.errorMsg);
+      log.error('failToGetThumbnails'.tr, e);
       snack('failToGetThumbnails'.tr, e.errorMsg ?? '', isShort: true);
       state.loadingState = LoadingState.error;
       updateSafely([loadingStateId]);

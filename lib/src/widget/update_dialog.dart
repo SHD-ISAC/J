@@ -8,8 +8,9 @@ import 'package:url_launcher/url_launcher_string.dart';
 class UpdateDialog extends StatelessWidget {
   final String currentVersion;
   final String latestVersion;
+  final Uri releasePage;
 
-  const UpdateDialog({Key? key, required this.currentVersion, required this.latestVersion}) : super(key: key);
+  const UpdateDialog({Key? key, required this.currentVersion, required this.latestVersion, required this.releasePage}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -45,7 +46,7 @@ class UpdateDialog extends StatelessWidget {
           child: Text('check'.tr + ' ->'),
           onPressed: () {
             backRoute();
-            launchUrlString('https://github.com/jiangtian616/JHenTai/releases', mode: LaunchMode.externalApplication);
+            launchUrlString(releasePage.toString(), mode: LaunchMode.externalApplication);
           },
         )
       ],

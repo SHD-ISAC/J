@@ -24,14 +24,16 @@ class SearchHistoryService with JHLifeCircleBeanWithConfigStorage implements JHL
   Future<void> applyBeanConfig(String configString) async {
     List searchHistories = jsonDecode(configString);
 
+    final updated = <SearchHistory>[];
     for (String searchHistory in searchHistories) {
-      histories.add(
+      updated.add(
         SearchHistory(
           rawKeyword: searchHistory,
           translatedKeyword: tagTranslationService.isReady ? await translateSearchHistory(searchHistory) : null,
         ),
       );
     }
+    histories = updated;
   }
 
   @override

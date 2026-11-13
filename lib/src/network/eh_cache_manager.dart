@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -12,6 +13,8 @@ import '../database/database.dart';
 class EHCacheManager extends Interceptor {
   final CacheOptions _options;
   final SqliteCacheStore _store;
+  final String Function() _session;
+  static const requestCacheSessionKey = 'ehCacheSession';
 
   static const allowedStatusCodes = [
     // OK
@@ -30,32 +33,30 @@ class EHCacheManager extends Interceptor {
 
   static const String realUriExtraKey = 'realUri';
 
-  EHCacheManager({required CacheOptions options})
+  EHCacheManager({required CacheOptions options, required String Function() session})
       : assert(options.store != null),
         _options = options,
-        _store = options.store!;
+        _store = options.store!,
+        _session = session;
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
     CacheOptions cacheOptions = _getCacheOptions(options);
 
-    options.extra[realUriExtraKey] = _computeCachedUrl(options, cacheOptions);
+    final cacheUrl = _computeCachedUrl(options, cacheOptions);
+    final session = (options.extra[requestCacheSessionKey] as String?) ?? _session();
+    options.extra[realUriExtraKey] = cacheUrl;
+    options.extra[requestCacheSessionKey] = session;
 
-    if (_shouldSkipRequest(options, cacheOptions)) {
-      handler.next(options);
-      return;
-    }
-
-    CacheResponse? cacheResponse = await _getCacheStore(cacheOptions).get(CacheOptions.defaultCacheKeyBuilder(options));
-    if (cacheResponse != null && cacheResponse.url == options.uri.toString()) {
-      if (cacheResponse.expired()) {
-        await _deleteCacheResponse(cacheResponse, cacheOptions);
-        return handler.next(options);
+    if (!_shouldSkipRequest(options, cacheOptions)) {
+      try {
+        final cached = await _getCacheStore(cacheOptions).get(CacheOptions.defaultCacheKeyBuilder(options));
+        if (session == _session() && cached != null && cached.url == cacheUrl && !cached.expired()) {
+          return handler.resolve(cached.toResponse(options), true);
+        }
+      } catch (error) {
+        log.warning('Reading page cache failed', error.runtimeType);
       }
-
-      log.trace('cache hit: ${options.uri.toString()}');
-      cacheResponse = await _updateCacheResponse(cacheResponse, cacheOptions);
-      return handler.resolve(cacheResponse.toResponse(options), true);
     }
     handler.next(options);
   }
@@ -70,16 +71,15 @@ class EHCacheManager extends Interceptor {
 
     try {
       await _saveResponse(response, cacheOptions);
-    } on Exception catch (e) {
-      log.error('save cache failed', e);
+    } catch (error) {
+      log.warning('Saving page cache failed', error.runtimeType);
     }
 
     handler.next(response);
   }
 
   Future<void> removeCacheByUrl(String url) {
-    String cacheKey = CacheOptions.defaultCacheKeyBuilder(RequestOptions(extra: {EHCacheManager.realUriExtraKey: url}));
-    return _store.delete(cacheKey);
+    return _store.deleteWithUrl(url);
   }
 
   Future<void> removeCacheByUrlPrefix(String url) {
@@ -130,7 +130,7 @@ class EHCacheManager extends Interceptor {
   }
 
   bool _shouldSkipResponse(Response response, CacheOptions cacheOptions) {
-    if (response.extra[CacheResponse.extraKey] != null) {
+    if (response.extra.containsKey(CacheResponse.extraKey) || response.requestOptions.extra[requestCacheSessionKey] != _session()) {
       return true;
     }
 
@@ -142,7 +142,12 @@ class EHCacheManager extends Interceptor {
       return true;
     }
 
-    if (!allowedStatusCodes.contains(response?.statusCode)) {
+    final cacheControl = response.headers[HttpHeaders.cacheControlHeader] ?? [];
+    if (cacheControl.expand((value) => value.split(',')).any((value) => value.trim().toLowerCase() == 'no-store')) {
+      return true;
+    }
+
+    if (!allowedStatusCodes.contains(response.statusCode)) {
       return true;
     }
 
@@ -157,15 +162,7 @@ class EHCacheManager extends Interceptor {
     response.extra[CacheResponse.extraKey] = cacheResponse.cacheKey;
   }
 
-  Future<CacheResponse> _updateCacheResponse(CacheResponse cacheResponse, CacheOptions cacheOptions) async {
-    CacheResponse newCacheResponse = cacheResponse.copyWith(expireDate: DateTime.now().add(cacheOptions.expire));
-    await _getCacheStore(cacheOptions).upsertCache(newCacheResponse);
-    return newCacheResponse;
-  }
 
-  Future<void> _deleteCacheResponse(CacheResponse cacheResponse, CacheOptions cacheOptions) async {
-    await _getCacheStore(cacheOptions).delete(cacheResponse.cacheKey);
-  }
 }
 
 enum CachePolicy {
@@ -205,7 +202,9 @@ class CacheOptions {
   }
 
   static String defaultCacheKeyBuilder(RequestOptions request) {
-    return md5.convert(utf8.encode(request.extra[EHCacheManager.realUriExtraKey])).toString();
+    final session = request.extra[EHCacheManager.requestCacheSessionKey];
+    final url = request.extra[EHCacheManager.realUriExtraKey];
+    return sha256.convert(utf8.encode('$session:${request.responseType}:$url')).toString();
   }
 
   Map<String, dynamic> toExtra() {
@@ -240,7 +239,7 @@ class CacheResponse {
     return CacheResponse(
       content: _serializeContent(response.requestOptions.responseType, response.data),
       expireDate: DateTime.now().add(options.expire),
-      headers: utf8.encode(jsonEncode(response.headers.map)),
+      headers: utf8.encode(jsonEncode(Map.of(response.headers.map)..removeWhere((key, _) => key.toLowerCase() == HttpHeaders.setCookieHeader))),
       cacheKey: CacheOptions.defaultCacheKeyBuilder(response.requestOptions),
       url: response.requestOptions.extra[EHCacheManager.realUriExtraKey] ?? response.requestOptions.uri.toString(),
     );
@@ -262,7 +261,12 @@ class CacheResponse {
 
   Headers _getHeaders() {
     Headers h = Headers();
-    jsonDecode(utf8.decode(headers)).forEach((key, value) => h.set(key, value));
+    final decoded = jsonDecode(utf8.decode(headers)) as Map<String, dynamic>;
+    for (final entry in decoded.entries) {
+      if (entry.key.toLowerCase() != HttpHeaders.setCookieHeader) {
+        h.set(entry.key, entry.value);
+      }
+    }
     return h;
   }
 
@@ -296,27 +300,15 @@ class CacheResponse {
     }
   }
 
-  CacheResponse copyWith({String? url, String? cacheKey, Uint8List? content, Uint8List? headers, DateTime? expireDate}) {
-    return CacheResponse(
-      url: url ?? this.url,
-      cacheKey: cacheKey ?? this.cacheKey,
-      content: content ?? this.content,
-      headers: headers ?? this.headers,
-      expireDate: expireDate ?? this.expireDate,
-    );
-  }
+
 }
 
 class SqliteCacheStore {
   final AppDb appDb;
 
-  SqliteCacheStore({required this.appDb}) {
-    try {
-      cleanExpired();
-    } catch (e) {
-      log.error('cleanExpired failed', e);
-    }
-  }
+  SqliteCacheStore({required this.appDb});
+
+  Future<void> purgeLegacy() => DioCacheDao.deleteLegacyCache();
 
   Future<void> cleanExpired() {
     return DioCacheDao.deleteCacheByDate(DateTime.now());
@@ -326,8 +318,8 @@ class SqliteCacheStore {
     return DioCacheDao.deleteAllCache();
   }
 
-  Future<void> delete(String key) {
-    return DioCacheDao.deleteByCacheKey(key);
+  Future<void> deleteWithUrl(String url) {
+    return DioCacheDao.deleteCacheByUrl(url);
   }
 
   Future<void> deleteWithUrlPrefix(String urlPrefix) {

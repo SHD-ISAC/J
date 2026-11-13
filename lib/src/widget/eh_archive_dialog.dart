@@ -214,7 +214,7 @@ class _EHArchiveDialogState extends State<EHArchiveDialog> {
         setStateSafely(() => balanceState = LoadingState.error);
       }
     } on DioException catch (e) {
-      log.error('checkBalanceFailed'.tr, e.errorMsg, e.stackTrace);
+      log.error('checkBalanceFailed'.tr, e, e.stackTrace);
       setStateSafely(() => balanceState = LoadingState.error);
     } catch (e) {
       log.error('checkBalanceFailed'.tr, e.toString(), StackTrace.current);
@@ -246,7 +246,7 @@ class _EHArchiveDialogState extends State<EHArchiveDialog> {
         botCost = cost * multiplier;
       });
     } on DioException catch (e) {
-      log.error('getBotCostFailed'.tr, e.errorMsg, e.stackTrace);
+      log.error('getBotCostFailed'.tr, e, e.stackTrace);
       setStateSafely(() => botCostState = LoadingState.error);
     } catch (e) {
       log.error('getBotCostFailed'.tr, e.toString(), StackTrace.current);
@@ -291,7 +291,7 @@ class _EHArchiveDialogState extends State<EHArchiveDialog> {
     try {
       archive = await ehRequest.get(url: widget.archivePageUrl, parser: EHSpiderParser.archivePage2Archive);
     } on DioException catch (e) {
-      log.error('getGalleryArchiveFailed'.tr, e.errorMsg);
+      log.error('getGalleryArchiveFailed'.tr, e);
       snack('getGalleryArchiveFailed'.tr, e.errorMsg ?? '');
       setStateSafely(() => loadingState = LoadingState.error);
       return;

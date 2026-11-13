@@ -8,6 +8,7 @@ import 'package:get/get.dart';
 import 'package:jhentai/src/enum/config_enum.dart';
 import 'package:jhentai/src/setting/download_setting.dart';
 import 'package:jhentai/src/service/log.dart';
+import 'package:jhentai/src/utils/app_pin.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:path/path.dart';
 
@@ -108,9 +109,34 @@ class SecuritySetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCi
   }
 
   Future<void> savePassword(String rawPassword) async {
-    String md5 = keyToMd5(rawPassword);
-    this.encryptedPassword.value = md5;
-    await saveBeanConfig();
+    final verifier = await AppPin.hash(rawPassword);
+    final previous = encryptedPassword.value;
+    encryptedPassword.value = verifier;
+    try {
+      await saveBeanConfig();
+    } catch (_) {
+      encryptedPassword.value = previous;
+      rethrow;
+    }
+  }
+
+  Future<bool> verifyPassword(String value) async {
+    final verifier = encryptedPassword.value;
+    if (verifier == null) {
+      return false;
+    }
+    if (!RegExp(r'^[a-f0-9]{32}$').hasMatch(verifier)) {
+      return AppPin.matches(value, verifier);
+    }
+    if (keyToMd5(value) != verifier) {
+      return false;
+    }
+    try {
+      await savePassword(value);
+    } catch (error) {
+      log.warning('Could not upgrade app PIN verifier', error.runtimeType);
+    }
+    return true;
   }
 
   Future<void> saveEnablePasswordAuth(bool enablePasswordAuth) async {

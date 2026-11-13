@@ -22,8 +22,16 @@ class DioCacheDao {
     return (appDb.delete(appDb.dioCache)..where((tbl) => tbl.expireDate.isSmallerThanValue(date))).go();
   }
 
+  static Future<int> deleteCacheByUrl(String url) {
+    return (appDb.delete(appDb.dioCache)..where((tbl) => tbl.url.equals(url))).go();
+  }
+
   static Future<int> deleteCacheLikeUrl(String url) {
     return (appDb.delete(appDb.dioCache)..where((tbl) => tbl.url.like(url))).go();
+  }
+
+  static Future<void> deleteLegacyCache() {
+    return appDb.customStatement('DELETE FROM dio_cache WHERE length(cacheKey) = 32');
   }
 
   static Future<int> deleteAllCache() {

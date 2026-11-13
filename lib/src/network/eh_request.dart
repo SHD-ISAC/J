@@ -28,10 +28,13 @@ import 'package:http_parser/http_parser.dart' show MediaType;
 import 'package:path/path.dart';
 import 'package:webview_flutter/webview_flutter.dart' show WebViewCookieManager;
 import '../service/jh_service.dart';
+import '../service/log.dart';
 import '../service/local_config_service.dart';
+import '../enum/config_enum.dart';
 import '../setting/network_setting.dart';
 import 'eh_cache_manager.dart';
 import 'eh_cookie_manager.dart';
+import 'ex_ech_adapter.dart';
 
 EHRequest ehRequest = EHRequest();
 
@@ -40,6 +43,8 @@ class EHRequest with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
   late final EHCookieManager _cookieManager;
   late final EHCacheManager _cacheManager;
   late final String systemProxyAddress;
+
+  int get cookieSession => _cookieManager.session;
 
   List<Cookie> get cookies => List.unmodifiable(_cookieManager.cookies);
 
@@ -53,19 +58,29 @@ class EHRequest with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
       receiveTimeout: Duration(milliseconds: networkSetting.receiveTimeout.value),
     ));
 
-    systemProxyAddress = await getSystemProxyAddress();
-    await _initProxy();
+    var detectedProxy = '';
+    try {
+      detectedProxy = await getSystemProxyAddress();
+    } catch (error) {
+      log.warning('System proxy is unavailable', error.runtimeType);
+    }
+    systemProxyAddress = detectedProxy;
+    networkSetting.systemProxyAddress = systemProxyAddress;
+    _initProxy();
+    _dio.httpClientAdapter = ExEchAdapter();
 
     await _initCookieManager();
 
-    _initCacheManager();
+    await _initCacheManager();
 
     _initCertificateForAndroidWithOldVersion();
 
     _initTimeOutTranslator();
 
     ever(ehSetting.site, (_) {
-      _cookieManager.removeCookies(['sp']);
+      _cookieManager.removeCookies(['sp']).catchError((Object error) {
+        log.warning('Could not persist the selected site', error.runtimeType);
+      });
     });
     ever(networkSetting.connectTimeout, (_) {
       setConnectTimeout(networkSetting.connectTimeout.value);
@@ -78,9 +93,9 @@ class EHRequest with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
   @override
   Future<void> doAfterBeanReady() async {}
 
-  Future<void> _initProxy() async {
+  void _initProxy() {
     SocksProxy.initProxy(
-      findProxy: await findProxySettingFunc(() => systemProxyAddress),
+      findProxy: findProxySettingFunc(() => systemProxyAddress),
     );
   }
 
@@ -90,12 +105,20 @@ class EHRequest with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
     _dio.interceptors.add(_cookieManager);
   }
 
-  void _initCacheManager() {
+  Future<void> _initCacheManager() async {
+    final store = SqliteCacheStore(appDb: appDb);
+    try {
+      await store.purgeLegacy();
+      await store.cleanExpired();
+    } catch (error) {
+      log.warning('Cleaning page cache failed', error.runtimeType);
+    }
     _cacheManager = EHCacheManager(
+      session: () => _cookieManager.cacheSession,
       options: CacheOptions(
         policy: CachePolicy.disable,
         expire: networkSetting.pageCacheMaxAge.value,
-        store: SqliteCacheStore(appDb: appDb),
+        store: store,
       ),
     );
     _dio.interceptors.add(_cacheManager);
@@ -144,8 +167,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
     _dio.interceptors.add(EHTimeoutTranslator());
   }
 
-  Future<void> storeEHCookies(List<Cookie> cookies) {
-    return _cookieManager.storeEHCookies(cookies);
+  Future<void> storeEHCookies(List<Cookie> cookies, {bool replaceAccount = false, int? requestSession}) {
+    return _cookieManager.storeEHCookies(cookies, replaceAccount: replaceAccount, requestSession: requestSession);
   }
 
   Future<bool> removeAllCookies() {
@@ -170,6 +193,10 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
   }
 
   ProxyConfig? currentProxyConfig() {
+    final type = networkSetting.proxyType.value;
+    if (type != JProxyType.system && type != JProxyType.direct && localConfigService.credentialsAreLocked(ConfigEnum.networkSetting)) {
+      throw const SecureConfigException();
+    }
     switch (networkSetting.proxyType.value) {
       case JProxyType.system:
         if (systemProxyAddress.trim().isEmpty) {
@@ -178,6 +205,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         return ProxyConfig(
           type: ProxyType.http,
           address: systemProxyAddress,
+          allowDirectFallback: true,
         );
       case JProxyType.http:
         return ProxyConfig(
@@ -185,6 +213,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
           address: networkSetting.proxyAddress.value,
           username: networkSetting.proxyUsername.value,
           password: networkSetting.proxyPassword.value,
+          allowDirectFallback: networkSetting.allowProxyDirectFallback.value,
         );
       case JProxyType.socks5:
         return ProxyConfig(
@@ -192,6 +221,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
           address: networkSetting.proxyAddress.value,
           username: networkSetting.proxyUsername.value,
           password: networkSetting.proxyPassword.value,
+          allowDirectFallback: networkSetting.allowProxyDirectFallback.value,
         );
       case JProxyType.socks4:
         return ProxyConfig(
@@ -199,6 +229,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
           address: networkSetting.proxyAddress.value,
           username: networkSetting.proxyUsername.value,
           password: networkSetting.proxyPassword.value,
+          allowDirectFallback: networkSetting.allowProxyDirectFallback.value,
         );
       case JProxyType.direct:
         return ProxyConfig(
@@ -236,6 +267,11 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
   Future<void> requestLogout() async {
     await removeAllCookies();
     await userSetting.clearBeanConfig();
+    try {
+      await _cacheManager.removeAllCache();
+    } catch (error) {
+      log.warning('Could not clear page cache after logout', error.runtimeType);
+    }
     if (GetPlatform.isWindows || GetPlatform.isLinux) {
       Directory directory = Directory(join(pathService.getVisibleDir().path, EHConsts.desktopWebviewDirectoryName));
       if (await directory.exists()) {

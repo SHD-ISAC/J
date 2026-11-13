@@ -2,8 +2,8 @@ import 'dart:convert';
 
 import 'package:get/get.dart';
 import 'package:jhentai/src/enum/config_enum.dart';
-import 'package:jhentai/src/network/eh_request.dart';
 
+import '../service/local_config_service.dart';
 import '../service/jh_service.dart';
 import '../service/log.dart';
 
@@ -16,6 +16,9 @@ class NetworkSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCir
   RxString proxyAddress = 'localhost:1080'.obs;
   RxnString proxyUsername = RxnString();
   RxnString proxyPassword = RxnString();
+  final RxBool allowProxyDirectFallback = false.obs;
+  final RxBool enableExEch = false.obs;
+  String systemProxyAddress = '';
   RxInt connectTimeout = 6000.obs;
   RxInt receiveTimeout = 6000.obs;
 
@@ -31,7 +34,9 @@ class NetworkSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCir
     proxyType.value = JProxyType.values[map['proxyType'] ?? proxyType.value.index];
     proxyAddress.value = map['proxyAddress'] ?? proxyAddress.value;
     proxyUsername.value = map['proxyUsername'] ?? proxyUsername.value;
-    proxyPassword.value = map['proxyPassword'] ?? proxyPassword.value;
+    proxyPassword.value = map['proxyPassword'] as String?;
+    allowProxyDirectFallback.value = map['allowProxyDirectFallback'] == true;
+    enableExEch.value = map['enableExEch'] == true;
     connectTimeout.value = map['connectTimeout'] ?? connectTimeout.value;
     receiveTimeout.value = map['receiveTimeout'] ?? receiveTimeout.value;
   }
@@ -45,6 +50,9 @@ class NetworkSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCir
       'proxyAddress': proxyAddress.value,
       'proxyUsername': proxyUsername.value,
       'proxyPassword': proxyPassword.value,
+
+      'allowProxyDirectFallback': allowProxyDirectFallback.value,
+      'enableExEch': enableExEch.value,
       'connectTimeout': connectTimeout.value,
       'receiveTimeout': receiveTimeout.value,
     });
@@ -69,11 +77,45 @@ class NetworkSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCir
   }
 
   Future<void> saveProxy(JProxyType proxyType, String proxyAddress, String? proxyUsername, String? proxyPassword) async {
-    log.debug('Proxy type: $proxyType');
-    this.proxyType.value = proxyType;
-    this.proxyAddress.value = proxyAddress;
+    final address = proxyAddress.trim();
+    if (proxyType != JProxyType.system && proxyType != JProxyType.direct) {
+      final uri = Uri.tryParse('http://$address');
+      if (uri == null ||
+          uri.host.isEmpty ||
+          uri.userInfo.isNotEmpty ||
+          uri.path.isNotEmpty ||
+          uri.hasQuery ||
+          uri.hasFragment ||
+          !uri.hasPort ||
+          uri.port < 1 ||
+          uri.port > 65535 ||
+          address.contains(RegExp(r'[;\s]'))) {
+        throw const FormatException('Invalid proxy endpoint');
+      }
+    }
+    if ((proxyUsername?.contains(RegExp(r'[:@;\s]')) ?? false) ||
+        (proxyPassword?.contains(RegExp(r'[@;\s]')) ?? false)) {
+      throw const FormatException('Invalid proxy credentials');
+    }
+    final config = jsonDecode(toConfigString()) as Map<String, dynamic>;
+    config['proxyType'] = proxyType.index;
+    config['proxyAddress'] = address;
+    config['proxyUsername'] = proxyUsername;
+    config['proxyPassword'] = proxyPassword;
+    await localConfigService.write(configKey: configEnum, value: jsonEncode(config), replaceCredentials: true);
+    this.proxyAddress.value = address;
     this.proxyUsername.value = proxyUsername;
     this.proxyPassword.value = proxyPassword;
+    this.proxyType.value = proxyType;
+  }
+
+  Future<void> saveEnableExEch(bool value) async {
+    enableExEch.value = value;
+    await saveBeanConfig();
+  }
+
+  Future<void> saveProxyDirectFallback(bool value) async {
+    allowProxyDirectFallback.value = value;
     await saveBeanConfig();
   }
 

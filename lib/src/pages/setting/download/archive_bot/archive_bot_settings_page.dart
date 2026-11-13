@@ -56,7 +56,7 @@ class _ArchiveBotSettingsPageState extends State<ArchiveBotSettingsPage> {
   Widget _buildApiKeySetting() {
     return ListTile(
       title: Text('apiSetting'.tr),
-      subtitle: Text(archiveBotSetting.apiKey.value == null ? 'apiKeyHint'.tr : archiveBotSetting.apiKey.value.toString()),
+      subtitle: Text(archiveBotSetting.apiKey.value == null ? 'apiKeyHint'.tr : '••••••••'),
       trailing: const Icon(Icons.keyboard_arrow_right),
       onTap: _showApiKeyDialog,
     );

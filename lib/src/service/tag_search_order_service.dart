@@ -8,7 +8,6 @@ import 'package:get/get.dart';
 import 'package:jhentai/src/database/dao/tag_count_dao.dart';
 import 'package:jhentai/src/database/database.dart';
 import 'package:jhentai/src/enum/config_enum.dart';
-import 'package:jhentai/src/extension/dio_exception_extension.dart';
 import 'package:jhentai/src/network/eh_request.dart';
 import 'package:jhentai/src/service/path_service.dart';
 import 'package:jhentai/src/setting/preference_setting.dart';
@@ -84,7 +83,7 @@ class TagSearchOrderOptimizationService with JHLifeCircleBeanErrorCatch implemen
         onRetry: (error) => log.warning('Fetch tag order optimization data from github failed, retry.'),
       );
     } on DioException catch (e) {
-      log.error('Fetch tag order optimization data from github failed after 5 times', e.errorMsg);
+      log.error('Fetch tag order optimization data from github failed after 5 times', e);
       loadingState.value = LoadingState.error;
       await localConfigService.write(configKey: ConfigEnum.tagSearchOrderOptimizationServiceLoadingState, value: loadingState.value.index.toString());
       return;
@@ -110,7 +109,7 @@ class TagSearchOrderOptimizationService with JHLifeCircleBeanErrorCatch implemen
         onRetry: (error) => log.warning('Download tag order optimization data failed, retry.'),
       );
     } on DioException catch (e) {
-      log.error('Download tag translation data failed after 5 times', e.errorMsg);
+      log.error('Download tag translation data failed after 5 times', e);
       loadingState.value = LoadingState.error;
       await localConfigService.write(configKey: ConfigEnum.tagSearchOrderOptimizationServiceLoadingState, value: loadingState.value.index.toString());
       return;

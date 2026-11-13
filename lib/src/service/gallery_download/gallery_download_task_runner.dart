@@ -3,12 +3,14 @@ part of 'gallery_download_service.dart';
 /// Orchestrates the per-gallery download pipeline: parse hrefs → parse urls →
 /// download bytes, with retry, re-parse, and upgrade-migration shortcuts.
 ///
-/// Each instance is bound to a single [GalleryDownloadInfo] but is stateless
-/// across calls — runners are created on demand by [GalleryDownloadService].
-/// State mutation (status, progress, queue submission) is delegated back to
-/// the service via its library-private aliases.
+/// A runner shares pending thumbnail requests and retry counts across images
+/// in the same attempt. Resuming creates a fresh runner.
 class _GalleryDownloadTaskRunner {
-  static const int _maxRetryTimes = 5;
+  static const int _maxRetryTimes = 3;
+  static const int _maxImageRestarts = 2;
+
+  final Map<int, Future<DetailPageInfo>> _thumbnailRequests = {};
+  final Map<int, int> _imageRestarts = {};
 
   final GalleryDownloadService _service;
   final GalleryDownloadInfo gallery;
@@ -60,28 +62,40 @@ class _GalleryDownloadTaskRunner {
       }
 
       GalleryDownloadInfo galleryDownloadInfo = _service.galleryDownloadInfos[gallery.gid]!;
-      int requestPageIndex = serialNo ~/ galleryDownloadInfo.thumbnailsCountPerPage;
+      if (galleryDownloadInfo.imageHrefs[serialNo] != null) {
+        return _service._submitImageTask(gallery, serialNo, () => parseImageUrlTask(serialNo));
+      }
+      final requestPageIndex = serialNo ~/ galleryDownloadInfo.thumbnailsCountPerPage;
+      final cancellation = galleryDownloadInfo.cancelToken;
 
       DetailPageInfo detailPageInfo;
       try {
-        detailPageInfo = await retry(
-          () => ehRequest.requestDetailPage(
-            galleryUrl: gallery.galleryUrl,
-            thumbnailsPageIndex: requestPageIndex,
-            cancelToken: galleryDownloadInfo.cancelToken,
-            parser: EHSpiderParser.detailPage2RangeAndThumbnails,
-          ),
-          retryIf: (e) => e is DioException && e.type != DioExceptionType.cancel,
-          onRetry: (e) => log.download('Parse image hrefs failed, retry. Reason: ${(e as DioException).toString()}'),
-          maxAttempts: _maxRetryTimes,
-        );
+        detailPageInfo = await _thumbnailRequests.putIfAbsent(requestPageIndex, () async {
+          try {
+            return await retry(
+              () => ehRequest.requestDetailPage(
+                galleryUrl: gallery.galleryUrl,
+                thumbnailsPageIndex: requestPageIndex,
+                cancelToken: cancellation,
+                parser: EHSpiderParser.detailPage2RangeAndThumbnails,
+              ),
+              retryIf: _retryable,
+              maxAttempts: _maxRetryTimes,
+            );
+          } finally {
+            _thumbnailRequests.remove(requestPageIndex);
+          }
+        });
+        if (cancellation.isCancelled) {
+          return;
+        }
       } on DioException catch (e) {
         if (e.type == DioExceptionType.cancel) {
           return;
         }
-        return _service._submitImageTask(gallery, serialNo, () => parseImageHrefTask(serialNo));
+        return _service._pauseOnSiteError(gallery: gallery, pauseAll: false, message: e.errorMsg);
       } on EHSiteException catch (e) {
-        log.download('Parse image href error, reason: ${e.message}, gallery url: ${gallery.galleryUrl}');
+        log.download('Thumbnail fetch failed, gallery: ${gallery.gid}, category: ${e.type}');
         await _service._pauseOnSiteError(gallery: gallery, pauseAll: e.shouldPauseAllDownloadTasks, message: e.message);
         return;
       }
@@ -101,6 +115,9 @@ class _GalleryDownloadTaskRunner {
         log.download(
           'Parse image hrefs error, thumbnails count per page is not equal to default setting, parse again. Thumbnails count per page: ${detailPageInfo.thumbnailsCountPerPage}, changed: $thumbnailsCountPerPageChanged',
         );
+        if (!await _consumeRestart(serialNo)) {
+          return;
+        }
         await ehRequest.removeCacheByGalleryUrlAndPage(gallery.galleryUrl, requestPageIndex);
         return _service._submitImageTask(gallery, serialNo, () => parseImageHrefTask(serialNo));
       }
@@ -137,15 +154,15 @@ class _GalleryDownloadTaskRunner {
             useCacheIfAvailable: !reParse,
             parser: EHSpiderParser.imagePage2GalleryImage,
           ),
-          retryIf: (e) => e is DioException && e.type != DioExceptionType.cancel,
-          onRetry: (e) => log.download('Parse image url failed, retry. Reason: ${(e as DioException).errorMsg}'),
+          retryIf: _retryable,
+          onRetry: (e) => log.download('Image URL request retry, gallery: ${gallery.gid}, image: $serialNo, category: ${(e as DioException).type}'),
           maxAttempts: _maxRetryTimes,
         );
       } on DioException catch (e) {
         if (e.type == DioExceptionType.cancel) {
           return;
         }
-        return _service._submitImageTask(gallery, serialNo, () => parseImageUrlTask(serialNo, reParse: true));
+        return _service._pauseOnSiteError(gallery: gallery, pauseAll: false, message: e.errorMsg);
       } on EHParseException catch (e) {
         log.download('Parse image url error, reason: ${e.message.tr}');
         await _service._pauseOnSiteError(gallery: gallery, pauseAll: e.shouldPauseAllDownloadTasks, message: e.message.tr);
@@ -178,7 +195,7 @@ class _GalleryDownloadTaskRunner {
       /// "parsing url" placeholder even after the image is available.
       _service.update(['${_service.downloadImageId}::${gallery.gid}::$serialNo', '${_service.downloadImageUrlId}::${gallery.gid}::$serialNo']);
 
-      log.download('Parse image url success, index: $serialNo, url: $downloadUrl');
+      log.download('Image URL parsed, gallery: ${gallery.gid}, image: $serialNo');
 
       /// Next step: download image
       return _service._submitImageTask(gallery, serialNo, () => downloadImageTask(serialNo));
@@ -237,12 +254,10 @@ class _GalleryDownloadTaskRunner {
           /// 403 is due to broken H@H node, we should re-parse
           /// If we have not downloaded any bytes, we should re-parse because we might encounter a death H@H node
           retryIf: (e) =>
-              e is DioException &&
-              e.type != DioExceptionType.cancel &&
-              (e.response == null || e.response!.statusCode != 403) &&
+              _retryable(e) &&
               galleryDownloadInfo.speedComputer.getImageDownloadedBytes(serialNo) > 0,
           onRetry: (e) {
-            log.download('Download ${gallery.title} image: $serialNo failed, retry. Reason: ${(e as DioException).errorMsg}. Url:$downloadUrl');
+            log.download('Image download retry, gallery: ${gallery.gid}, image: $serialNo, category: ${(e as DioException).type}');
             galleryDownloadInfo.speedComputer.resetProgress(serialNo);
           },
         );
@@ -250,7 +265,10 @@ class _GalleryDownloadTaskRunner {
         if (e.type == DioExceptionType.cancel) {
           return;
         }
-        log.download('Download ${gallery.title} image: $serialNo failed, try re-parse. Reason: ${e.errorMsg}. Url:$downloadUrl');
+        log.download('Image download failed, gallery: ${gallery.gid}, image: $serialNo, category: ${e.type}');
+        if (e.response?.statusCode == 429) {
+          return _service._pauseOnSiteError(gallery: gallery, pauseAll: true, message: '429Hints'.tr);
+        }
         return _reParseImageUrlAndDownload(serialNo);
       } on EHSiteException catch (e) {
         log.download('Download Error, reason: ${e.message}');
@@ -278,7 +296,8 @@ class _GalleryDownloadTaskRunner {
         return _service._pauseOnSiteError(gallery: gallery, pauseAll: false, message: 'downloadFailed'.tr);
       }
 
-      log.download('Download ${gallery.title} image: $serialNo success');
+      _imageRestarts.remove(serialNo);
+      log.download('Image downloaded, gallery: ${gallery.gid}, image: $serialNo');
 
       await _service._updateImageStatus(gallery, image, serialNo, DownloadStatus.downloaded);
 
@@ -286,9 +305,36 @@ class _GalleryDownloadTaskRunner {
     };
   }
 
-  /// the image's url may be invalid, try re-parse and then download, eg. reparse token
-  Future<void> _reParseImageUrlAndDownload(int serialNo) async {
+  bool _retryable(Exception error) {
+    if (error is! DioException) {
+      return false;
+    }
+    final status = error.response?.statusCode;
+    if (status != null) {
+      return status == 408 || status >= 500;
+    }
+    return error.type == DioExceptionType.connectionError ||
+        error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.sendTimeout ||
+        error.type == DioExceptionType.receiveTimeout;
+  }
+
+  Future<bool> _consumeRestart(int serialNo) async {
     if (_service._taskHasBeenPausedOrRemoved(gallery)) {
+      return false;
+    }
+    final used = _imageRestarts[serialNo] ?? 0;
+    if (used >= _maxImageRestarts) {
+      await _service._pauseOnSiteError(gallery: gallery, pauseAll: false, message: 'downloadFailed'.tr);
+      return false;
+    }
+    _imageRestarts[serialNo] = used + 1;
+    return true;
+  }
+
+  /// Reparse a stale image URL within the current attempt's restart budget.
+  Future<void> _reParseImageUrlAndDownload(int serialNo) async {
+    if (!await _consumeRestart(serialNo)) {
       return;
     }
 

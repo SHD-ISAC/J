@@ -265,7 +265,7 @@ class _SettingEHPageState extends State<SettingEHPage> {
         maxAttempts: 3,
       );
     } on DioException catch (e) {
-      log.error('Fetch image quota failed', e.errorMsg);
+      log.error('Fetch image quota failed', e);
       snack('fetchImageQuotaFailed'.tr, e.errorMsg ?? '', isShort: false);
       setStateSafely(() {
         imageLimitLoadingState = LoadingState.error;
@@ -317,7 +317,7 @@ class _SettingEHPageState extends State<SettingEHPage> {
     try {
       assets = await gpCreditFuture;
     } on DioException catch (e) {
-      log.error('Get eh assets failed', e.errorMsg);
+      log.error('Get eh assets failed', e);
     } on EHSiteException catch (e) {
       log.error('Get eh assets failed', e.message);
     } catch (e) {
@@ -333,7 +333,7 @@ class _SettingEHPageState extends State<SettingEHPage> {
     try {
       h = await hathFuture;
     } on DioException catch (e) {
-      log.error('Get hath failed', e.errorMsg);
+      log.error('Get hath failed', e);
     } on EHSiteException catch (e) {
       log.error('Get hath failed', e.message);
     } catch (e) {
@@ -368,7 +368,7 @@ class _SettingEHPageState extends State<SettingEHPage> {
       );
       profiles = settings.profiles;
     } on DioException catch (e) {
-      log.error('Load profile fail', e.errorMsg);
+      log.error('Load profile fail', e);
       snack('loadProfileFailed'.tr, e.errorMsg ?? '', isShort: false);
       setStateSafely(() {
         profileLoadingState = LoadingState.error;
@@ -406,7 +406,7 @@ class _SettingEHPageState extends State<SettingEHPage> {
     try {
       await ehRequest.requestResetImageLimit();
     } on DioException catch (e) {
-      log.error('Reset image quota failed', e.errorMsg);
+      log.error('Reset image quota failed', e);
       snack('Reset image quota failed'.tr, e.errorMsg ?? '', isShort: false);
       setStateSafely(() {
         resetLimitLoadingState = LoadingState.error;

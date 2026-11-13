@@ -66,7 +66,7 @@ class FavoritePageLogic extends BasePageLogic {
         return loadMore(checkLoadingState: false);
       }
 
-      log.error('change favorite sort order fail', e.errorMsg);
+      log.error('change favorite sort order fail', e);
       snack('failed'.tr, e.errorMsg ?? '');
       state.loadingState = LoadingState.error;
       updateSafely([loadingStateId]);

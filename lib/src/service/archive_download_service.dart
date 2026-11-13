@@ -16,7 +16,6 @@ import 'package:j_downloader/j_downloader.dart';
 import 'package:jhentai/src/database/dao/archive_group_dao.dart';
 import 'package:jhentai/src/database/database.dart';
 import 'package:jhentai/src/exception/eh_site_exception.dart';
-import 'package:jhentai/src/extension/dio_exception_extension.dart';
 import 'package:jhentai/src/model/archive_bot_response/archive_bot_response.dart';
 import 'package:jhentai/src/model/archive_bot_response/archive_resolve_vo.dart';
 import 'package:jhentai/src/model/archive_unlock_result.dart';
@@ -47,6 +46,7 @@ import 'gallery_download/download_path_resolver.dart';
 import 'gallery_download/gallery_download_service.dart';
 import 'jh_service.dart';
 import 'log.dart';
+import 'local_config_service.dart';
 
 ArchiveDownloadService archiveDownloadService = ArchiveDownloadService();
 
@@ -92,7 +92,10 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
     _completer.complete(true);
 
     isolateCountListener = ever(downloadSetting.archiveDownloadIsolateCount, (_) => _onIsolateCountChange());
-    proxyConfigListener = everAll([networkSetting.proxyAddress, networkSetting.proxyUsername, networkSetting.proxyPassword], (_) => _onProxyConfigChange());
+    proxyConfigListener = everAll(
+      [networkSetting.proxyType, networkSetting.proxyAddress, networkSetting.proxyUsername, networkSetting.proxyPassword, networkSetting.allowProxyDirectFallback],
+      (_) => _onProxyConfigChange(),
+    );
     timeoutListener = everAll([networkSetting.connectTimeout, networkSetting.receiveTimeout], (_) => _onTimeoutChange());
 
     if (downloadSetting.restoreTasksAutomatically.isTrue) {
@@ -188,7 +191,10 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
       archiveDownloadInfo.cancelToken.cancel();
       archiveDownloadInfo.cancelToken = CancelToken();
       await archiveDownloadInfo.downloadTask?.pause();
-      archiveDownloadInfo.downloadCompleter?.completeError(CancelException());
+      final completed = archiveDownloadInfo.downloadCompleter;
+      if (completed != null && !completed.isCompleted) {
+        completed.completeError(CancelException());
+      }
       archiveDownloadInfo.speedComputer.pause();
 
       await _updateArchiveStatus(gid, needReUnlock ? ArchiveStatus.needReUnlock : ArchiveStatus.paused);
@@ -235,7 +241,10 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
       archiveDownloadInfo.cancelToken.cancel();
       archiveDownloadInfo.cancelToken = CancelToken();
       await archiveDownloadInfo.downloadTask?.pause();
-      archiveDownloadInfo.downloadCompleter?.completeError(CancelException());
+      final completed = archiveDownloadInfo.downloadCompleter;
+      if (completed != null && !completed.isCompleted) {
+        completed.completeError(CancelException());
+      }
 
       await _updateArchiveInDatabase(archive.gid);
       update(['$archiveStatusId::${archive.gid}']);
@@ -249,7 +258,7 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
               cancelToken: archiveDownloadInfo.cancelToken,
             ),
             retryIf: (e) => e is DioException && e.type != DioExceptionType.cancel,
-            onRetry: (e) => log.download('Cancel archive: ${archive.title} failed, retry. Reason: ${(e as DioException).message}'),
+            onRetry: (e) => log.download('Cancel archive: ${archive.gid} failed, retry. Category: ${(e as DioException).type}'),
             maxAttempts: _maxRetryTimes,
           );
         } on DioException catch (e) {
@@ -257,7 +266,7 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
             return;
           }
 
-          log.download('Cancel archive error, reason: ${e.toString()}');
+          log.download('Cancel archive error, category: ${e.runtimeType}');
           return pauseDownloadArchive(archive.gid);
         }
       }
@@ -692,10 +701,16 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
         }
       },
       onDone: () async {
-        archiveDownloadInfos[archive.gid]!.downloadCompleter?.complete();
+        final completed = archiveDownloadInfos[archive.gid]?.downloadCompleter;
+        if (completed != null && !completed.isCompleted) {
+          completed.complete();
+        }
       },
       onError: (JDownloadException e) async {
-        archiveDownloadInfos[archive.gid]!.downloadCompleter?.completeError(e);
+        final completed = archiveDownloadInfos[archive.gid]?.downloadCompleter;
+        if (completed != null && !completed.isCompleted) {
+          completed.completeError(e);
+        }
       },
     );
   }
@@ -776,12 +791,35 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
     }
   }
 
+  Future<void> _restartProxyDownloads = Future<void>.value();
+  bool _proxyChangePending = false;
+
   void _onProxyConfigChange() {
-    for (ArchiveDownloadInfo archiveDownloadInfo in archiveDownloadInfos.values) {
-      if (archiveDownloadInfo.archiveStatus.code <= ArchiveStatus.downloading.code && archiveDownloadInfo.downloadTask != null) {
-        archiveDownloadInfo.downloadTask!.setProxy(ehRequest.currentProxyConfig());
-      }
+    if (_proxyChangePending) {
+      return;
     }
+    _proxyChangePending = true;
+    _restartProxyDownloads = _restartProxyDownloads.then((_) async {
+      _proxyChangePending = false;
+      for (final entry in archiveDownloadInfos.entries.toList()) {
+        final gid = entry.key;
+        final info = entry.value;
+        final task = info.downloadTask;
+        if (task == null || info.archiveStatus.code >= ArchiveStatus.downloaded.code) {
+          continue;
+        }
+        final active = info.archiveStatus == ArchiveStatus.downloading;
+        if (active) {
+          await pauseDownloadArchive(gid);
+        }
+        task.setProxy(ehRequest.currentProxyConfig());
+        if (active && identical(archiveDownloadInfos[gid], info)) {
+          await resumeDownloadArchive(gid);
+        }
+      }
+    }).catchError((Object error) {
+      log.warning('Updating archive proxy failed', error.runtimeType);
+    });
   }
 
   void _onTimeoutChange() {
@@ -838,7 +876,7 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
           parser: EHSpiderParser.unlockArchivePage2DownloadArchivePageUrl,
         ),
         retryIf: (e) => e is DioException && e.type != DioExceptionType.cancel,
-        onRetry: (e) => log.download('Request unlock archive: ${archive.title} failed, retry. Reason: ${(e as DioException).message}'),
+        onRetry: (e) => log.download('Request unlock archive: ${archive.gid} failed, retry. Category: ${(e as DioException).type}'),
         maxAttempts: _maxRetryTimes,
       );
     } on DioException catch (e) {
@@ -896,7 +934,7 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
           parser: EHSpiderParser.unlockArchivePage2DownloadArchivePageUrl,
         ),
         retryIf: (e) => e is DioException && e.type != DioExceptionType.cancel,
-        onRetry: (e) => log.download('Request unlock archive: ${archive.title} failed, retry. Reason: ${(e as DioException).message}'),
+        onRetry: (e) => log.download('Request unlock archive: ${archive.gid} failed, retry. Category: ${(e as DioException).type}'),
         maxAttempts: _maxRetryTimes,
       );
     } on DioException catch (e) {
@@ -962,7 +1000,7 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
             parser: EHSpiderParser.downloadArchivePage2DownloadUrl,
           ),
           retryIf: (e) => e is DioException && e.type != DioExceptionType.cancel,
-          onRetry: (e) => log.download('Parse archive download url: ${archive.title} failed, retry. Reason: ${(e as DioException).errorMsg}'),
+          onRetry: (e) => log.download('Parse archive download url: ${archive.title} failed, retry. Reason: ${(e as DioException).type}'),
           maxAttempts: _maxRetryTimes,
         );
       } on DioException catch (e) {
@@ -970,7 +1008,7 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
           return;
         }
 
-        return await _getDownloadUrl(archive);
+        return pauseDownloadArchive(archive.gid);
       } on EHSiteException catch (e) {
         log.download('Download error, reason: ${e.message}');
         snack('archiveError'.tr, e.message, isShort: true);
@@ -981,7 +1019,7 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
           return pauseDownloadArchive(archive.gid);
         }
       } catch (e) {
-        log.download('Parse archive download url error, reason: $e');
+        log.download('Parse archive download URL failed: ${e.runtimeType}');
         snack('archiveError'.tr, e.toString(), isShort: true);
         return pauseDownloadArchive(archive.gid);
       }
@@ -1020,7 +1058,7 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
           return;
         }
 
-        return await _getDownloadUrl(archive);
+        return pauseDownloadArchive(archive.gid);
       } catch (e) {
         log.download('Archive bot URL resolution failed: ${e.runtimeType}');
         snack('archiveError'.tr, e.toString(), isShort: true);
@@ -1067,7 +1105,13 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
 
     await _updateArchiveStatus(archive.gid, ArchiveStatus.downloading);
 
-    JDownloadTask task = archiveDownloadInfo.downloadTask ??= _generateDownloadTask(archiveDownloadInfo.downloadUrl!, archive);
+    final JDownloadTask task;
+    try {
+      task = archiveDownloadInfo.downloadTask ??= _generateDownloadTask(archiveDownloadInfo.downloadUrl!, archive);
+    } on SecureConfigException {
+      snack('archiveError'.tr, 'secureStorageUnavailable'.tr, isShort: true);
+      return pauseDownloadArchive(archive.gid);
+    }
     archiveDownloadInfo.speedComputer
       ..resetDownloadedBytes(task.currentBytes)
       ..start();
@@ -1091,10 +1135,10 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
       }
 
       try {
-        await task.start();
-
-        archiveDownloadInfo.downloadCompleter = Completer();
-        await archiveDownloadInfo.downloadCompleter!.future;
+        final completed = Completer<void>();
+        archiveDownloadInfo.downloadCompleter = completed;
+        final start = task.start();
+        await Future.wait([start, completed.future], eagerError: true);
       } on CancelException catch (_) {
         archiveDownloadInfo.downloadCompleter = null;
         return;
@@ -1116,17 +1160,17 @@ class ArchiveDownloadService extends GetxController with GridBasePageServiceMixi
             snack('archiveError'.tr, '429Hints'.tr, isShort: true);
             return await pauseDownloadArchive(archive.gid);
           } else {
-            log.download('Download archive failed: ${archive.title}, original: ${archive.isOriginal}, reason: $e');
+            log.download('Download archive failed: ${archive.title}, original: ${archive.isOriginal}, category: ${e.runtimeType}');
             snack('archiveError'.tr, e.error?.toString() ?? e.type.desc, isShort: true);
             return pauseDownloadArchive(archive.gid);
           }
         } else {
-          log.download('Download archive failed: ${archive.title}, original: ${archive.isOriginal}, reason: $e');
+          log.download('Download archive failed: ${archive.title}, original: ${archive.isOriginal}, category: ${e.runtimeType}');
           snack('archiveError'.tr, e.error?.toString() ?? e.type.desc, isShort: true);
           return pauseDownloadArchive(archive.gid);
         }
       } on Exception catch (e) {
-        log.download('Failed to download archive ${archive.title}, reason: $e');
+        log.download('Failed to download archive ${archive.title}, category: ${e.runtimeType}');
         snack('archiveError'.tr, e.toString(), isShort: true);
         archiveDownloadInfo.downloadCompleter = null;
         return pauseDownloadArchive(archive.gid);

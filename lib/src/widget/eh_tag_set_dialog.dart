@@ -88,7 +88,7 @@ class _EHTagSetDialogState extends State<EHTagSetDialog> {
         parser: EHSpiderParser.myTagsPage2TagSetNamesAndTagSetsAndApikey,
       );
     } on DioException catch (e) {
-      log.error('getTagSetFailed'.tr, e.errorMsg);
+      log.error('getTagSetFailed'.tr, e);
       snack('getTagSetFailed'.tr, e.errorMsg ?? '', isShort: true);
       setStateSafely(() {
         _loadingState = LoadingState.error;

@@ -21,6 +21,7 @@ class ArchiveBotRequest with JHLifeCircleBeanErrorCatch implements JHLifeCircleB
     _dio = Dio(BaseOptions(
       connectTimeout: Duration(milliseconds: networkSetting.connectTimeout.value),
       receiveTimeout: Duration(milliseconds: networkSetting.receiveTimeout.value),
+      followRedirects: false,
     ));
 
     ever(networkSetting.connectTimeout, (_) {
@@ -29,6 +30,12 @@ class ArchiveBotRequest with JHLifeCircleBeanErrorCatch implements JHLifeCircleB
     ever(networkSetting.receiveTimeout, (_) {
       setReceiveTimeout(networkSetting.receiveTimeout.value);
     });
+    _dio.interceptors.add(InterceptorsWrapper(onRequest: (options, handler) {
+      if (!options.uri.isScheme('https') || options.uri.userInfo.isNotEmpty) {
+        return handler.reject(DioException(requestOptions: options, message: 'Archive bot requires HTTPS'));
+      }
+      handler.next(options);
+    }));
   }
 
   @override

@@ -189,7 +189,7 @@ class _EHFavoriteDialogState extends State<EHFavoriteDialog> {
         _loadingState = LoadingState.success;
       });
     } on DioException catch (e) {
-      log.error('getGalleryFavoriteInfoFailed'.tr, e.errorMsg);
+      log.error('getGalleryFavoriteInfoFailed'.tr, e);
       snack('getGalleryFavoriteInfoFailed'.tr, e.errorMsg ?? '', isShort: true);
       setState(() => _loadingState = LoadingState.error);
       return;

@@ -19,6 +19,7 @@ import 'package:jhentai/src/widget/loading_state_indicator.dart';
 
 import '../../../../exception/eh_site_exception.dart';
 import '../../../../network/eh_timeout_translator.dart';
+import '../../../../network/ex_ech_adapter.dart';
 import '../../../../service/log.dart';
 import '../../../../setting/network_setting.dart';
 
@@ -107,6 +108,7 @@ class _CookiePageState extends State<CookiePage> {
     });
 
     try {
+      final session = ehRequest.cookieSession;
       Response response = await _dio!.request(
         EHConsts.EXIndex,
         options: Options(headers: {
@@ -125,7 +127,11 @@ class _CookiePageState extends State<CookiePage> {
         final cookies = CookieUtil.parseSetCookieHeaders(response.headers[HttpHeaders.setCookieHeader] ?? []);
         for (final cookie in cookies) {
           if (cookie.name == EHConsts.igneousCookieName && cookie.value != 'mystery') {
-            await ehRequest.storeEHCookies([Cookie(cookie.name, cookie.value)]);
+            if (session != ehRequest.cookieSession) {
+              setStateSafely(() => _refreshIgneousState = LoadingState.idle);
+              return;
+            }
+            await ehRequest.storeEHCookies([Cookie(cookie.name, cookie.value)], requestSession: session);
             toast('success'.tr);
             setStateSafely(() {
               _refreshIgneousState = LoadingState.success;
@@ -174,6 +180,7 @@ class _CookiePageState extends State<CookiePage> {
       receiveTimeout: Duration(milliseconds: networkSetting.receiveTimeout.value),
     ));
 
+    _dio!.httpClientAdapter = ExEchAdapter();
     _dio!.interceptors.add(EHTimeoutTranslator());
   }
 }

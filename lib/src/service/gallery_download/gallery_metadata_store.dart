@@ -51,6 +51,9 @@ class _GalleryMetadataStore {
   /// Drain the dirty flag for [gid] and write the current in-memory state.
   /// Called by the periodic timer.
   void _flushPendingWrite(int gid) {
+    if (_metadataWrites.containsKey(gid)) {
+      return;
+    }
     if (!_dirty.remove(gid)) {
       /// No changes since the last write — stop the timer so the gallery
       /// doesn't keep getting polled.
@@ -62,8 +65,12 @@ class _GalleryMetadataStore {
       _metadataSaveTimers.remove(gid)?.cancel();
       return;
     }
-    _metadataWrites[gid] = _write(info).whenComplete(() {
-      _metadataWrites.remove(gid);
+    final write = _write(info);
+    _metadataWrites[gid] = write;
+    write.whenComplete(() {
+      if (identical(_metadataWrites[gid], write)) {
+        _metadataWrites.remove(gid);
+      }
     });
   }
 
@@ -72,8 +79,16 @@ class _GalleryMetadataStore {
     final int gid = gallery.gid;
     _metadataSaveTimers.remove(gid)?.cancel();
     _dirty.remove(gid);
-    await _metadataWrites[gid];
-    await _write(gallery);
+    final previous = _metadataWrites[gid] ?? Future<void>.value();
+    final write = previous.then((_) => _write(gallery));
+    _metadataWrites[gid] = write;
+    try {
+      await write;
+    } finally {
+      if (identical(_metadataWrites[gid], write)) {
+        _metadataWrites.remove(gid);
+      }
+    }
   }
 
   /// Cancel any pending writes for a gallery that's being deleted.
@@ -85,29 +100,35 @@ class _GalleryMetadataStore {
   Future<void> _write(GalleryDownloadInfo gallery) async {
     final GalleryDownloadInfo info = gallery;
 
-    /// Serialize from [info.images]. If images has been evicted (gallery fully
-    /// downloaded and not currently being read), reload from DB so the on-disk
-    /// metadata stays complete. This is rare for completed galleries — save
-    /// is triggered by image-status or config changes, which don't fire on
-    /// evicted galleries except for rare events like group/priority change.
-    await info.ensureImagesLoaded();
-
-    final List<GalleryImage?>? images = info.images;
-    final List<Map<String, dynamic>?> imagesJson = images?.map((img) => img?.toJson()).toList() ?? <Map<String, dynamic>?>[];
-
-    Map<String, Object> metadata = {
-      'gallery': gallery.toGalleryDownloadedData().toJson(),
-      'images': jsonEncode(imagesJson),
-    };
-
     try {
+      /// Serialize from [info.images]. If images has been evicted (gallery fully
+      /// downloaded and not currently being read), reload from DB so the on-disk
+      /// metadata stays complete. This is rare for completed galleries — save
+      /// is triggered by image-status or config changes, which don't fire on
+      /// evicted galleries except for rare events like group/priority change.
+      await info.ensureImagesLoaded();
+
+      final List<GalleryImage?>? images = info.images;
+      final List<Map<String, dynamic>?> imagesJson = images?.map((img) => img?.toJson()).toList() ?? <Map<String, dynamic>?>[];
+
+      Map<String, Object> metadata = {
+        'gallery': gallery.toGalleryDownloadedData().toJson(),
+        'images': jsonEncode(imagesJson),
+      };
+
       io.File file = io.File(
         path.join(DownloadPathResolver.computeGalleryDownloadAbsolutePath(gallery.toGalleryDownloadedData()), metadataFileName),
       );
-      if (!await file.exists()) {
-        await file.create(recursive: true);
+      await file.parent.create(recursive: true);
+      final staging = io.File('${file.path}.tmp');
+      try {
+        await staging.writeAsString(jsonEncode(metadata), flush: true);
+        await staging.rename(file.path);
+      } finally {
+        if (await staging.exists()) {
+          await staging.delete();
+        }
       }
-      await file.writeAsString(jsonEncode(metadata));
     } catch (e, st) {
       log.error('Save gallery metadata failed, gid: ${gallery.gid}', e, st);
     }
@@ -185,10 +206,10 @@ class _GalleryMetadataStore {
       if ((metadata['gallery'] as Map)['groupName'] == null) {
         (metadata['gallery'] as Map)['groupName'] = 'default';
       }
-      if (metadata['tags'] == null) {
+      if ((metadata['gallery'] as Map)['tags'] == null) {
         (metadata['gallery'] as Map)['tags'] = '';
       }
-      if (metadata['tagRefreshTime'] == null) {
+      if ((metadata['gallery'] as Map)['tagRefreshTime'] == null) {
         (metadata['gallery'] as Map)['tagRefreshTime'] = DateTime.now().toString();
       }
 

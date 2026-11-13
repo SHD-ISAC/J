@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
-import 'package:intl/intl.dart';
 import 'package:jhentai/src/setting/advanced_setting.dart';
 import 'package:jhentai/src/service/path_service.dart';
 import 'package:logger/logger.dart';
@@ -11,6 +10,8 @@ import 'package:path/path.dart' as path;
 
 import '../exception/upload_exception.dart';
 import 'jh_service.dart';
+import 'rotating_log_output.dart';
+import '../exception/eh_site_exception.dart';
 import '../utils/byte_util.dart';
 
 LogService log = LogService();
@@ -62,7 +63,16 @@ class LogService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
 
   @override
   Future<void> doAfterBeanReady() async {
-    _settingsLoaded = true;
+    final directory = logDirPath == null ? null : Directory(logDirPath!);
+    try {
+      if (directory != null && await directory.exists()) {
+        await _removeLegacyLogs(directory);
+      }
+    } on FileSystemException {
+      stderr.writeln('Unable to remove legacy application logs');
+    } finally {
+      _settingsLoaded = true;
+    }
   }
 
   /// For actions that print params
@@ -128,12 +138,19 @@ class LogService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
     }
   }
 
+  static final _secretField =
+      RegExp(r'(?:ipb_pass_hash|ipb_member_id|igneous|[Aa]pi[_ -]?[Kk]ey|[Aa]uthorization|[Ss]et-[Cc]ookie|[Cc]ookie|[Pp]ass[Ww]ord)[=:]');
+  static final _url = RegExp(r'https?://[^\s<>]+', caseSensitive: false);
+
   Object? _safeLogValue(Object? value) {
     return switch (value) {
       DioException(:final type) => type,
       FormatException() => value.runtimeType,
       HttpException() => value.runtimeType,
-      _ => value,
+      EHSiteException(:final type) => type,
+      String text => _secretField.hasMatch(text) ? '[Sensitive log text omitted]' : text.replaceAll(_url, '[URL]'),
+      num() || bool() || Enum() || Type() || null => value,
+      _ => value.runtimeType,
     };
   }
 
@@ -148,33 +165,30 @@ class LogService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
     }
     return compute((String logDirPath) {
       Directory logDirectory = Directory(logDirPath);
-      return logDirectory
-          .exists()
-          .then<int>((exist) {
-            if (!exist) {
-              return 0;
-            }
+      return logDirectory.exists().then<int>((exist) {
+        if (!exist) {
+          return 0;
+        }
 
-            return logDirectory.list().where((element) => element is File).fold<int>(0, (bytes, file) => bytes + (file as File).lengthSync());
-          })
-          .then<String>((totalBytes) => byte2String(totalBytes.toDouble()));
+        return logDirectory.list().where((element) => element is File).fold<int>(0, (bytes, file) => bytes + (file as File).lengthSync());
+      }).then<String>((totalBytes) => byte2String(totalBytes.toDouble()));
     }, directory);
   }
 
   Future<void> clear() => _withLogFiles(() async {
-    await _verboseFileLogger?.close();
-    await _warningFileLogger?.close();
-    await _downloadFileLogger?.close();
+        await _verboseFileLogger?.close();
+        await _warningFileLogger?.close();
+        await _downloadFileLogger?.close();
 
-    _verboseFileLogger = null;
-    _warningFileLogger = null;
-    _downloadFileLogger = null;
+        _verboseFileLogger = null;
+        _warningFileLogger = null;
+        _downloadFileLogger = null;
 
-    final directory = logDirPath;
-    if (directory != null && await Directory(directory).exists()) {
-      await Directory(directory).delete(recursive: true);
-    }
-  });
+        final directory = logDirPath;
+        if (directory != null && await Directory(directory).exists()) {
+          await Directory(directory).delete(recursive: true);
+        }
+      });
 
   Future<void> _withLogFiles(Future<void> Function() action) {
     final operation = _fileOperations.then((_) => action());
@@ -187,24 +201,24 @@ class LogService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
       return;
     }
     await Directory(logDirPath!).create(recursive: true);
-    String fileName = DateFormat('yyyy-MM-dd_HH-mm-ss').format(DateTime.now());
+    final directory = Directory(logDirPath!);
 
     _verboseFileLogger ??= Logger(
       printer: HybridPrinter(prodPrinterWithBox, trace: prodPrinterWithoutBox, debug: prodPrinterWithoutBox, info: prodPrinterWithoutBox),
       filter: EHLogFilter(),
-      output: FileOutput(file: File(path.join(logDirPath!, '$fileName.log'))),
+      output: RotatingLogOutput(directory, 'jhentai'),
     );
     if (advancedSetting.enableVerboseLogging.isTrue) {
       _warningFileLogger ??= Logger(
         level: Level.warning,
         printer: prodPrinterWithBox,
         filter: ProductionFilter(),
-        output: FileOutput(file: File(path.join(logDirPath!, '${fileName}_error.log'))),
+        output: RotatingLogOutput(directory, 'warnings'),
       );
       _downloadFileLogger ??= Logger(
         printer: prodPrinterWithoutBox,
         filter: ProductionFilter(),
-        output: FileOutput(file: File(path.join(logDirPath!, '${fileName}_download.log'))),
+        output: RotatingLogOutput(directory, 'downloads'),
       );
     }
 
@@ -213,6 +227,15 @@ class LogService with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
       if (_warningFileLogger != null) _warningFileLogger!.init,
       if (_downloadFileLogger != null) _downloadFileLogger!.init,
     ]);
+  }
+
+  Future<void> _removeLegacyLogs(Directory directory) async {
+    final oldLog = RegExp(r'^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(_error|_download)?\.log$');
+    await for (final file in directory.list(followLinks: false)) {
+      if (file is File && oldLog.hasMatch(path.basename(file.path))) {
+        await file.delete();
+      }
+    }
   }
 }
 

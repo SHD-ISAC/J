@@ -193,13 +193,13 @@ class DetailsPageLogic extends GetxController with LoginRequiredMixin, Scroll2To
       updateSafely([loadingStateId]);
     }
 
-    log.info('Get gallery details:${state.galleryUrl.url}');
+    log.info('Get gallery details: ${state.galleryUrl.gid}');
 
     ({GalleryDetail galleryDetails, String apikey})? detailPageInfo;
     try {
       detailPageInfo = await _getDetailsWithRedirectAndFallback(useCache: useCacheIfAvailable);
     } on DioException catch (e) {
-      log.error('Get Gallery Detail Failed', e.errorMsg, e.stackTrace);
+      log.error('Get Gallery Detail Failed', e, e.stackTrace);
       snack('getGalleryDetailFailed'.tr, e.errorMsg ?? '', isShort: true);
       state.loadingState = LoadingState.error;
       if (refreshPageImmediately) {
@@ -257,7 +257,7 @@ class DetailsPageLogic extends GetxController with LoginRequiredMixin, Scroll2To
   }
 
   Future<void> _handleGalleryDeleted(bool refreshPageImmediately, EHSiteException exception) async {
-    log.trace('Gallery deleted: ${state.galleryUrl.url}, try to get metadata');
+    log.trace('Gallery deleted: ${state.galleryUrl.gid}, try to get metadata');
 
     try {
       state.galleryMetadata = await ehRequest.requestGalleryMetadata<GalleryMetadata>(
@@ -266,7 +266,7 @@ class DetailsPageLogic extends GetxController with LoginRequiredMixin, Scroll2To
         parser: EHSpiderParser.galleryMetadataJson2GalleryMetadata,
       );
     } on DioException catch (e) {
-      log.error('Get Gallery Metadata Failed', e.errorMsg);
+      log.error('Get Gallery Metadata Failed', e);
       snack('getGalleryDetailFailed'.tr, e.errorMsg ?? '', isShort: true);
       state.loadingState = LoadingState.error;
       if (refreshPageImmediately) {
@@ -321,7 +321,7 @@ class DetailsPageLogic extends GetxController with LoginRequiredMixin, Scroll2To
         parser: EHSpiderParser.detailPage2Thumbnails,
       );
     } on DioException catch (e) {
-      log.error('failToGetThumbnails'.tr, e.errorMsg);
+      log.error('failToGetThumbnails'.tr, e);
       snack('failToGetThumbnails'.tr, e.errorMsg ?? '', isShort: true);
       state.loadingThumbnailsState = LoadingState.error;
       updateSafely([loadingThumbnailsStateId]);
@@ -447,7 +447,7 @@ class DetailsPageLogic extends GetxController with LoginRequiredMixin, Scroll2To
             EHSpiderParser.favoritePopup2GalleryNote,
           );
         } on DioException catch (e) {
-          log.error('getGalleryFavoriteInfoFailed'.tr, e.errorMsg);
+          log.error('getGalleryFavoriteInfoFailed'.tr, e);
           snack('getGalleryFavoriteInfoFailed'.tr, e.errorMsg ?? '', isShort: true);
           state.favoriteState = LoadingState.error;
           updateSafely([favoriteId]);
@@ -525,7 +525,7 @@ class DetailsPageLogic extends GetxController with LoginRequiredMixin, Scroll2To
           ..favoriteTagName = favoriteSetting.favoriteTagNames[operation.favIndex];
       }
     } on DioException catch (e) {
-      log.error(operation.isDelete ? 'removeFavoriteFailed'.tr : 'favoriteGalleryFailed'.tr, e.errorMsg);
+      log.error(operation.isDelete ? 'removeFavoriteFailed'.tr : 'favoriteGalleryFailed'.tr, e);
       snack(operation.isDelete ? 'removeFavoriteFailed'.tr : 'favoriteGalleryFailed'.tr, e.errorMsg ?? '', isShort: true);
       state.favoriteState = LoadingState.error;
       updateSafely([favoriteId]);
@@ -594,7 +594,7 @@ class DetailsPageLogic extends GetxController with LoginRequiredMixin, Scroll2To
         EHSpiderParser.galleryRatingResponse2RatingInfo,
       );
     } on DioException catch (e) {
-      log.error('ratingFailed'.tr, e.errorMsg);
+      log.error('ratingFailed'.tr, e);
       snack('ratingFailed'.tr, e.errorMsg ?? '');
       state.ratingState = LoadingState.error;
       updateSafely([ratingId]);
@@ -754,7 +754,7 @@ class DetailsPageLogic extends GetxController with LoginRequiredMixin, Scroll2To
         parser: EHSpiderParser.downloadHHPage2Result,
       );
     } on DioException catch (e) {
-      log.error('H@H download error', e.errorMsg);
+      log.error('H@H download error', e);
       snack('failed'.tr, e.errorMsg ?? '');
       return;
     } on EHSiteException catch (e) {
@@ -838,7 +838,7 @@ class DetailsPageLogic extends GetxController with LoginRequiredMixin, Scroll2To
   }
 
   Future<void> shareGallery() async {
-    log.info('Share gallery:${state.galleryUrl}');
+    log.info('Share gallery: ${state.galleryUrl.gid}');
 
     if (GetPlatform.isDesktop) {
       await FlutterClipboard.copy(state.galleryUrl.url);
@@ -933,7 +933,7 @@ class DetailsPageLogic extends GetxController with LoginRequiredMixin, Scroll2To
         parser: EHSpiderParser.voteTagResponse2ErrorMessage,
       );
     } on DioException catch (e) {
-      log.error('addTagFailed'.tr, e.errorMsg);
+      log.error('addTagFailed'.tr, e);
       snack('addTagFailed'.tr, e.errorMsg ?? '');
       return;
     } on EHSiteException catch (e) {

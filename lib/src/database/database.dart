@@ -65,6 +65,8 @@ part 'database.g.dart';
 class AppDb extends _$AppDb {
   AppDb() : super(_openConnection());
 
+  AppDb.withExecutor(QueryExecutor executor) : super(executor);
+
   @override
   int get schemaVersion => 25;
 
@@ -456,7 +458,11 @@ LazyDatabase _openConnection() {
 
     sqlite3.tempDirectory = pathService.tempDir.path;
 
-    return NativeDatabase(file);
+    return NativeDatabase(file, setup: (database) {
+      if (Platform.isMacOS || Platform.isLinux) {
+        database.execute('PRAGMA secure_delete = ON');
+      }
+    });
   });
 }
 

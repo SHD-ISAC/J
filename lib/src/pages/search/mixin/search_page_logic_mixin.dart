@@ -135,7 +135,7 @@ mixin SearchPageLogicMixin on BasePageLogic {
         parser: EHSpiderParser.imageLookup2RedirectUrl,
       );
     } on DioException catch (e) {
-      log.error('fileSearchFailed'.tr, e.errorMsg);
+      log.error('fileSearchFailed'.tr, e);
       snack('fileSearchFailed'.tr, e.errorMsg ?? '');
       state.hasSearched = false;
       state.loadingState = LoadingState.idle;

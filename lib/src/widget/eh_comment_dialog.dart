@@ -108,7 +108,7 @@ class EHCommentDialogState extends State<EHCommentDialog> {
       }
     } on DioException catch (e) {
       if (e.response?.statusCode != 302) {
-        log.error('sendCommentFailed'.tr, e.errorMsg);
+        log.error('sendCommentFailed'.tr, e);
         snack('sendCommentFailed'.tr, e.errorMsg ?? '');
         return;
       }

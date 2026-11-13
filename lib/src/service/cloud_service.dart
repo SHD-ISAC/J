@@ -1,18 +1,23 @@
+import 'dart:convert';
+
 import 'package:collection/collection.dart';
 import 'package:drift/drift.dart';
 import 'package:jhentai/src/enum/config_enum.dart';
+import 'package:jhentai/src/database/dao/gallery_history_dao.dart';
 import 'package:jhentai/src/enum/config_type_enum.dart';
 import 'package:jhentai/src/model/config.dart';
+import 'package:jhentai/src/model/gallery_history_model.dart';
+import 'package:jhentai/src/model/search_config.dart';
 import 'package:jhentai/src/service/isolate_service.dart';
 import 'package:jhentai/src/service/local_config_service.dart';
 import 'package:jhentai/src/service/quick_search_service.dart';
+import 'package:jhentai/src/service/read_progress_service.dart';
 import 'package:jhentai/src/service/search_history_service.dart';
 
 import '../database/database.dart';
 import 'history_service.dart';
 import 'jh_service.dart';
 import 'local_block_rule_service.dart';
-import 'log.dart';
 
 CloudConfigService cloudConfigService = CloudConfigService();
 
@@ -35,52 +40,99 @@ class CloudConfigService with JHLifeCircleBeanErrorCatch implements JHLifeCircle
   @override
   Future<void> doAfterBeanReady() async {}
 
-  Future<void> importConfig(CloudConfig config) async {
-    log.info('importConfig: ${config.type}');
-
-    switch (config.type) {
-      case CloudConfigTypeEnum.readIndexRecord:
-        List list = await isolateService.jsonDecodeAsync(config.config);
-        List<LocalConfig> readIndexRecords = list.map((e) => LocalConfig.fromJson(e)).toList();
-        await localConfigService.batchWrite(readIndexRecords
-            .map((e) => LocalConfigCompanion(
-                  configKey: Value(e.configKey.key),
-                  subConfigKey: Value(e.subConfigKey),
-                  value: Value(e.value),
-                  utime: Value(e.utime),
-                ))
-            .toList());
-        break;
-      case CloudConfigTypeEnum.quickSearch:
-        await localConfigService.write(configKey: ConfigEnum.quickSearch, value: config.config);
-        await quickSearchService.refreshBean();
-        break;
-      case CloudConfigTypeEnum.searchHistory:
-        await localConfigService.write(configKey: ConfigEnum.searchHistory, value: config.config);
-        await searchHistoryService.refreshBean();
-        break;
-      case CloudConfigTypeEnum.blockRules:
-        List list = await isolateService.jsonDecodeAsync(config.config);
-        List<LocalBlockRule> blockRules = list.map((e) => LocalBlockRule.fromJson(e)).toList();
-
-        for (LocalBlockRule blockRule in blockRules) {
-          blockRule.id = null;
-        }
-        
-        blockRules.groupListsBy((element) => element.groupId!).forEach((groupId, rules) async {
-          bool exists = await localBlockRuleService.existsGroup(groupId);
-          if (!exists) {
-            await localBlockRuleService.replaceBlockRulesByGroup(groupId, rules);
+  Future<void> importConfigs(List<CloudConfig> configs) async {
+    final changes = <Future<void> Function()>[];
+    final progressKeys = <String>{};
+    final importedTypes = <CloudConfigTypeEnum>{};
+    for (final config in configs) {
+      if (configTypeVersionMap[config.type] != config.version) {
+        throw const FormatException('Unsupported backup version');
+      }
+      importedTypes.add(config.type);
+      final decoded = await isolateService.jsonDecodeAsync(config.config);
+      switch (config.type) {
+        case CloudConfigTypeEnum.readIndexRecord:
+          final records = decodeReadProgress(decoded);
+          progressKeys.addAll(records.map((entry) => entry.subConfigKey.value));
+          changes.add(() => localConfigService.batchWrite(records));
+        case CloudConfigTypeEnum.quickSearch:
+          final presets = decoded as Map<String, dynamic>;
+          for (final value in presets.values) {
+            SearchConfig.fromJson(value as Map<String, dynamic>);
           }
-        });
-
-        break;
-      case CloudConfigTypeEnum.history:
-        List list = await isolateService.jsonDecodeAsync(config.config);
-        List<GalleryHistoryV2Data> histories = list.map((e) => GalleryHistoryV2Data.fromJson(e)).toList();
-        await historyService.batchRecord(histories);
-        break;
+          changes.add(() async {
+            await localConfigService.write(configKey: ConfigEnum.quickSearch, value: config.config);
+          });
+        case CloudConfigTypeEnum.searchHistory:
+          (decoded as List).cast<String>().toList();
+          changes.add(() async {
+            await localConfigService.write(configKey: ConfigEnum.searchHistory, value: config.config);
+          });
+        case CloudConfigTypeEnum.blockRules:
+          final rules = (decoded as List).map((entry) => LocalBlockRule.fromJson(entry)..id = null).toList();
+          for (final rule in rules) {
+            final result = localBlockRuleService.getHandlerByRule(rule).validateRule(rule);
+            if (!result.success || rule.groupId == null) {
+              throw const FormatException('Invalid rule in backup');
+            }
+          }
+          final groups = rules.groupListsBy((rule) => rule.groupId!);
+          changes.add(() async {
+            for (final group in groups.entries) {
+              if (!await localBlockRuleService.existsGroup(group.key)) {
+                final result = await localBlockRuleService.replaceBlockRulesByGroup(group.key, group.value);
+                if (!result.success) {
+                  throw const FormatException('Unable to import a block rule group');
+                }
+              }
+            }
+          });
+        case CloudConfigTypeEnum.history:
+          final records = (decoded as List).map((entry) => GalleryHistoryV2Data.fromJson(entry)).toList();
+          for (final record in records) {
+            GalleryHistoryModel.fromJson(jsonDecode(record.jsonBody) as Map<String, dynamic>);
+          }
+          changes.add(() async {
+            for (final chunk in records.slices(1000)) {
+              await GalleryHistoryDao.batchReplaceHistory(chunk);
+            }
+          });
+      }
     }
+
+    await appDb.transaction(() async {
+      for (final apply in changes) {
+        await apply();
+      }
+    });
+    readProgressService.invalidateImportedProgress(progressKeys);
+    if (importedTypes.contains(CloudConfigTypeEnum.quickSearch)) {
+      await quickSearchService.refreshBean();
+    }
+    if (importedTypes.contains(CloudConfigTypeEnum.searchHistory)) {
+      await searchHistoryService.refreshBean();
+    }
+  }
+
+  static List<LocalConfigCompanion> decodeReadProgress(Object? decoded) {
+    if (decoded is! List) {
+      throw const FormatException('Invalid reading-progress backup');
+    }
+    return decoded.map((entry) {
+      if (entry is! Map<String, dynamic> || entry['configKey'] != ConfigEnum.readIndexRecord.key) {
+        throw const FormatException('Invalid reading-progress record');
+      }
+      final key = entry['subConfigKey'];
+      final value = entry['value'];
+      if (key is! String || (int.tryParse(key) ?? 0) <= 0 || value is! String || (int.tryParse(value) ?? -1) < 0) {
+        throw const FormatException('Invalid reading-progress value');
+      }
+      return LocalConfigCompanion(
+        configKey: Value(ConfigEnum.readIndexRecord.key),
+        subConfigKey: Value(key),
+        value: Value(value),
+      );
+    }).toList();
   }
 
   Future<CloudConfig?> getLocalConfig(CloudConfigTypeEnum type) async {

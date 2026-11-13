@@ -1,8 +1,9 @@
+import 'dart:async';
+
 import 'package:jhentai/src/enum/config_enum.dart';
 import 'package:jhentai/src/service/local_config_service.dart';
 import 'package:jhentai/src/service/path_service.dart';
 
-import '../main.dart';
 import 'log.dart';
 
 abstract interface class JHLifeCircleBean {
@@ -50,7 +51,7 @@ mixin JHLifeCircleBeanWithConfigStorage {
 
       String? configString = await localConfigService.read(configKey: configEnum);
       if (configString != null) {
-        applyBeanConfig(configString);
+        await applyBeanConfig(configString);
       }
 
       log.debug(configString == null ? 'Init $runtimeType config success with default' : 'Init $runtimeType config success');
@@ -74,7 +75,7 @@ mixin JHLifeCircleBeanWithConfigStorage {
       if (configString == null) {
         log.debug('Refresh $runtimeType config success with default');
       } else {
-        applyBeanConfig(configString);
+        await applyBeanConfig(configString);
         log.debug('Refresh $runtimeType config success');
       }
     } catch (e, stack) {
@@ -91,7 +92,7 @@ mixin JHLifeCircleBeanWithConfigStorage {
     return localConfigService.delete(configKey: configEnum);
   }
 
-  void applyBeanConfig(String configString);
+  FutureOr<void> applyBeanConfig(String configString);
 
   Future<void> doInitBean();
 

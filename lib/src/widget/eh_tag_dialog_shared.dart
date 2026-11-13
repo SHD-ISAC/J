@@ -147,7 +147,7 @@ mixin EHTagVoteLogicMixin<T extends StatefulWidget> on State<T> implements Login
         parser: EHSpiderParser.voteTagResponse2ErrorMessage,
       );
     } on DioException catch (e) {
-      log.error('voteTagFailed'.tr, e.errorMsg);
+      log.error('voteTagFailed'.tr, e);
       snack('voteTagFailed'.tr, e.errorMsg ?? '');
       setStateSafely(() {
         if (clickedIsVotingUp) {
@@ -288,7 +288,7 @@ mixin EHTagVoteLogicMixin<T extends StatefulWidget> on State<T> implements Login
         hidden: newTag.hidden,
       );
     } on DioException catch (e) {
-      log.error('updateTagFailed'.tr, e.errorMsg);
+      log.error('updateTagFailed'.tr, e);
       toast('${'updateTagFailed'.tr}: ${e.errorMsg}', isShort: false);
       setStateSafely(() {
         addWatchedTagState = LoadingState.idle;
@@ -334,7 +334,7 @@ mixin EHTagVoteLogicMixin<T extends StatefulWidget> on State<T> implements Login
     try {
       await ehRequest.requestDeleteWatchedTag(watchedTagId: tagId, tagSetNo: tagSetNo);
     } on DioException catch (e) {
-      log.error('deleteTagFailed'.tr, e.errorMsg);
+      log.error('deleteTagFailed'.tr, e);
       toast('${'deleteTagFailed'.tr}: ${e.errorMsg}', isShort: false);
       setStateSafely(() {
         if (watch) {
@@ -388,7 +388,7 @@ mixin EHTagVoteLogicMixin<T extends StatefulWidget> on State<T> implements Login
         parser: EHSpiderParser.addTagSetResponse2Result,
       );
     } on DioException catch (e) {
-      log.error('addNewTagSetFailed'.tr, e.errorMsg);
+      log.error('addNewTagSetFailed'.tr, e);
       toast('${'addNewTagSetFailed'.tr}: ${e.errorMsg}', isShort: false);
       setStateSafely(() {
         if (watch) {

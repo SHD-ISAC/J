@@ -985,12 +985,6 @@ class EHSpiderParser {
     return hath?.trim();
   }
 
-  static String githubReleasePage2LatestVersion(Headers headers, dynamic data) {
-    List releases = data;
-    Map latestRelease = releases[0];
-    return latestRelease['tag_name'];
-  }
-
   static String latestReleaseResponse2Tag(Headers headers, dynamic data) {
     return (headers['Location'] as List<String>).first.split('/').last;
   }

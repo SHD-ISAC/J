@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:jhentai/src/extension/widget_extension.dart';
 import 'package:jhentai/src/setting/security_setting.dart';
+import 'package:jhentai/src/service/local_config_service.dart';
 import 'package:jhentai/src/utils/toast_util.dart';
 import 'package:jhentai/src/widget/eh_app_password_setting_dialog.dart';
 
@@ -44,14 +45,19 @@ class SettingSecurityPage extends StatelessWidget {
           String? password = await Get.dialog(const EHAppPasswordSettingDialog());
 
           if (password != null) {
-            securitySetting.savePassword(password);
+            try {
+              await securitySetting.savePassword(password);
+            } on SecureConfigException {
+              toast('secureStorageUnavailable'.tr);
+              return;
+            }
             toast('success'.tr);
           } else {
             return;
           }
         }
 
-        securitySetting.saveEnablePasswordAuth(value);
+        await securitySetting.saveEnablePasswordAuth(value);
       },
     );
   }

@@ -578,7 +578,7 @@ class _EHCommentFooterState extends State<_EHCommentFooter> with LoginRequiredMi
         parser: EHSpiderParser.votingCommentResponse2Score,
       );
     } on DioException catch (e) {
-      log.error('voteCommentFailed'.tr, e.errorMsg);
+      log.error('voteCommentFailed'.tr, e);
       toast('${'voteCommentFailed'.tr}: ${e.errorMsg}');
       return;
     } on EHSiteException catch (e) {
