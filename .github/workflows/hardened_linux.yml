@@ -1,10 +1,16 @@
-name: Hardened Linux Build
+name: Hardened Desktop Build
 
 on:
   push:
     branches:
       - 'hardened-*'
+      - 'ci-validate-*'
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a GitHub Release after all builds pass
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -16,14 +22,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-linux-x64:
-    runs-on: ubuntu-22.04
+  build:
+    if: startsWith(github.ref, 'refs/heads/hardened-') || startsWith(github.ref, 'refs/heads/ci-validate-')
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x64
+            runner: ubuntu-22.04
+            artifact: JHenTai-Hardened-Linux-x64
+          - platform: macOS arm64
+            runner: macos-26-intel
+            artifact: JHenTai-Hardened-macOS-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
     env:
+      CI: 'true'
+      FLUTTER_SUPPRESS_ANALYTICS: 'true'
+      GO_VERSION: 1.26.11
       FLUTTER_VERSION: 3.44.8
+      FLUTTER_COMMIT: 058e0af2c2b57e369d905a03ac9748b0ebf543c6
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Verify hardened source policy
         shell: bash
@@ -52,29 +80,99 @@ jobs:
             exit 1
           fi
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: master
-          cache: true
+          if grep -R -nE 'badCertificateCallback|onBadCertificate|enableDomainFronting|domainFrontingExtraKey|InsecureSkipVerify|EncryptedClientHelloRejectionVerify' lib native/ech third_party/j_downloader/lib; then
+            echo "::error::TLS verification override or legacy domain fronting reappeared"
+            exit 1
+          fi
 
-      - name: Show Flutter version
-        run: flutter --version
+          if grep -R -nE 'parse2Cookies error:|saveUserInfo:|saveEncryptedPassword:|saveApiKey:|saveConfig: type=' lib; then
+            echo "::error::Sensitive credential logging reappeared"
+            exit 1
+          fi
+
+      - name: Select Xcode
+        if: runner.os == 'macOS'
+        run: |
+          test "$(uname -m)" = x86_64
+          developer_dir=/Applications/Xcode_26.6.app/Contents/Developer
+          test -d "$developer_dir"
+          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$developer_dir" xcodebuild -version
+
+      - name: Fetch pinned Flutter source
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          sdk="$RUNNER_TEMP/flutter"
+          git init --quiet "$sdk"
+          git -C "$sdk" remote add origin https://github.com/flutter/flutter.git
+          git -C "$sdk" -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=45 \
+            fetch --depth=1 origin "refs/tags/$FLUTTER_VERSION:refs/tags/$FLUTTER_VERSION"
+          test "$(git -C "$sdk" rev-parse "$FLUTTER_VERSION^{commit}")" = "$FLUTTER_COMMIT"
+          git -C "$sdk" checkout --quiet --detach "$FLUTTER_COMMIT"
+
+      - name: Initialize the Flutter and Dart SDK
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          sdk="$RUNNER_TEMP/flutter"
+          "$sdk/bin/flutter" --disable-analytics
+          "$sdk/bin/flutter" --version
+          echo "$sdk/bin" >> "$GITHUB_PATH"
+
+      - name: Build the ECH client
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            platform=darwin
+            target=arm64
+            if [[ "$(uname -m)" == arm64 ]]; then
+              host=arm64
+              digest=e3a42e67a7a8acf450ebada2b074c7ca863000ca514907b7185b45e8f5cdff57
+            else
+              host=amd64
+              digest=394baae971332f2bc783d6e2004ae57101479bd3b06ed8209a3fe3570d4ce498
+            fi
+          else
+            platform=linux
+            host=amd64
+            target=amd64
+            digest=9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec
+          fi
+          archive="$RUNNER_TEMP/go.tar.gz"
+          curl --fail --silent --show-error --location --retry 2 \
+            "https://go.dev/dl/go${GO_VERSION}.${platform}-${host}.tar.gz" -o "$archive"
+          printf '%s  %s\n' "$digest" "$archive" | shasum -a 256 -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          go="$RUNNER_TEMP/go/bin/go"
+          export GOTOOLCHAIN=local GOPROXY=off CGO_ENABLED=0
+          cd native/ech
+          "$go" test ./...
+          GOOS="$platform" GOARCH="$target" "$go" build -trimpath -ldflags='-s -w' -o "$RUNNER_TEMP/jhentai-ech" .
+          if [[ "$host" == "$target" ]]; then
+            "$RUNNER_TEMP/jhentai-ech" --version
+          fi
 
       - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y ninja-build libfuse2 webkit2gtk-4.1
+          sudo apt-get install -y ninja-build libfuse2 webkit2gtk-4.1 libsecret-1-dev libsqlite3-dev
 
       - name: Resolve Dart dependencies
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
+
+      - name: Run Flutter tests
+        if: runner.os == 'Linux'
+        run: flutter test --no-pub
 
       - name: Build Linux release
-        run: flutter build linux --release -t lib/src/main.dart
+        if: runner.os == 'Linux'
+        run: flutter build linux --release --no-pub -t lib/src/main.dart
 
       - name: Build Debian package
-        id: package
+        if: runner.os == 'Linux'
+        id: deb
         shell: bash
         run: |
           set -euo pipefail
@@ -88,6 +186,7 @@ jobs:
           mkdir -p "$ROOT/usr/share/icons/hicolor/512x512/apps"
 
           cp -r "build/linux/${ARCH}/release/bundle/." "$ROOT/opt/jhentai/"
+          install -m 0755 "$RUNNER_TEMP/jhentai-ech" "$ROOT/opt/jhentai/jhentai-ech"
           cp -r linux/assets/DEBIAN "$ROOT/DEBIAN"
           chmod 0755 "$ROOT/DEBIAN/postinst" "$ROOT/DEBIAN/postrm"
 
@@ -99,44 +198,151 @@ jobs:
           DEB="build/linux/JHenTai-${VERSION}-Hardened-Linux-${ARCH}.deb"
           dpkg-deb --build --root-owner-group "$ROOT" "$DEB"
 
-          echo "deb=$DEB" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "package=$DEB" >> "$GITHUB_OUTPUT"
+
+      - name: Build macOS arm64 release
+        if: runner.os == 'macOS'
+        run: |
+          # Flutter forwards EXCLUDED_ARCHS to the Xcode build and its Swift packages.
+          printf 'EXCLUDED_ARCHS = x86_64\n' > "$RUNNER_TEMP/jhentai-arm64.xcconfig"
+          XCODE_XCCONFIG_FILE="$RUNNER_TEMP/jhentai-arm64.xcconfig" \
+            flutter build macos --release --no-pub -t lib/src/main.dart
+
+      - name: Package and verify macOS DMG
+        if: runner.os == 'macOS'
+        id: dmg
+        run: bash script/build_hardened_macos_dmg.sh "$RUNNER_TEMP/jhentai-ech"
 
       - name: Verify built binary policy
+        env:
+          DEB: ${{ steps.deb.outputs.package }}
         shell: bash
         run: |
           set -euo pipefail
 
-          TMP="$(mktemp -d)"
-          trap 'rm -rf "$TMP"' EXIT
-
-          dpkg-deb -x "${{ steps.package.outputs.deb }}" "$TMP"
-
-          APP="$TMP/opt/jhentai/lib/libapp.so"
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            TMP="$(mktemp -d)"
+            trap 'rm -rf "$TMP"' EXIT
+            dpkg-deb -x "$DEB" "$TMP"
+            APP="$TMP/opt/jhentai/lib/libapp.so"
+          else
+            APP=build/macos/Build/Products/Release/jhentai.app/Contents/Frameworks/App.framework/App
+          fi
           test -f "$APP"
 
           forbidden='jhentai\.top|api\.telegram\.org|discord(app)?\.com/api/webhooks|sentry\.io|mixpanel|amplitude|telemetry'
 
           if strings -a "$APP" | grep -iE "$forbidden"; then
-            echo "::error::Unexpected forbidden endpoint or telemetry string found in libapp.so"
+            echo "::error::Unexpected forbidden endpoint or telemetry string found in $APP"
             exit 1
           fi
 
-      - name: Generate SHA-256
-        shell: bash
+      - name: Read package version
+        id: version
         run: |
-          sha256sum "${{ steps.package.outputs.deb }}" | tee build/linux/SHA256SUMS
+          version="$(awk '/^version:/ {print $2; exit}' pubspec.yaml)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]
+          echo "value=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Upload hardened artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: JHenTai-Hardened-Linux-x64
-          path: |
-            ${{ steps.package.outputs.deb }}
-            build/linux/SHA256SUMS
-          if-no-files-found: error
+      - name: Generate SHA-256
+        id: checksum
+        env:
+          PACKAGE: ${{ steps.deb.outputs.package || steps.dmg.outputs.package }}
+        run: |
+          set -euo pipefail
+          test -f "$PACKAGE"
+          directory="$(dirname "$PACKAGE")"
+          (cd "$directory" && shasum -a 256 "$(basename "$PACKAGE")") | tee "$directory/SHA256SUMS"
+          echo "file=$directory/SHA256SUMS" >> "$GITHUB_OUTPUT"
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: ${{ steps.package.outputs.deb }}
+          subject-path: ${{ steps.deb.outputs.package || steps.dmg.outputs.package }}
+
+      - name: Upload hardened artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ matrix.artifact }}-${{ steps.version.outputs.value }}
+          path: |
+            ${{ steps.deb.outputs.package || steps.dmg.outputs.package }}
+            ${{ steps.checksum.outputs.file }}
+          if-no-files-found: error
+
+  smoke-macos:
+    name: Launch macOS on Apple silicon
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 15
+    permissions: {}
+    steps:
+      - name: Download the packaged macOS build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: JHenTai-Hardened-macOS-arm64-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/jhentai-dmg
+
+      - name: Verify and start the packaged app
+        shell: bash
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          cd "$RUNNER_TEMP/jhentai-dmg"
+          shasum -a 256 -c SHA256SUMS
+          mount=$(mktemp -d)
+          trap 'hdiutil detach "$mount" >/dev/null || true; rmdir "$mount" || true' EXIT
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount" ./*.dmg
+          app="$mount/JHenTai.app"
+          codesign --verify --deep --strict "$app"
+          stdout_log="$RUNNER_TEMP/jhentai-launch.out"
+          stderr_log="$RUNNER_TEMP/jhentai-launch.err"
+          touch "$stdout_log" "$stderr_log"
+          open -n -F -W --stdout "$stdout_log" --stderr "$stderr_log" "$app" --args --verify-ech-helper
+          grep -Fx 'Application rendered its first frame and launched the ECH client' "$stdout_log"
+
+      - name: Show application startup diagnostics
+        if: failure()
+        run: |
+          for log in "$RUNNER_TEMP/jhentai-launch.out" "$RUNNER_TEMP/jhentai-launch.err"; do
+            if [[ -f "$log" ]]; then tail -n 80 "$log"; fi
+          done
+
+  additional:
+    if: startsWith(github.ref, 'refs/heads/hardened-') || startsWith(github.ref, 'refs/heads/ci-validate-')
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/hardened_additional_platforms.yml
+    secrets:
+      ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+      ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+      ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+      ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+
+  release:
+    name: Publish verified GitHub Release
+    if: >-
+      github.repository == 'SHD-ISAC/J' &&
+      startsWith(github.ref, 'refs/heads/hardened-') &&
+      (github.event_name == 'push' || inputs.publish)
+    needs: [build, smoke-macos, additional]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          path: ${{ runner.temp }}/build-artifacts
+      - name: Verify and publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_NAME: JHenTai
+        shell: bash
+        run: bash script/publish_hardened_release.sh "$RUNNER_TEMP/build-artifacts"
