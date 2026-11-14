@@ -41,7 +41,8 @@ jobs:
             digest: b2f765234217327a5859d046c9f3b167387b61da5408b5866ed448d905877c66
           - platform: windows
             name: Windows x64
-            runner: windows-2025
+            # The locked local_auth_windows and permission_handler_windows packages use /await.
+            runner: windows-2022
             archive: stable/windows/flutter_windows_3.44.8-stable.zip
             digest: 095c108a08e0377d8a6501fed65aeb288908a070ed3f135e525dc6431c7686e4
     env:
