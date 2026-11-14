@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:get/get.dart';
 import 'package:jhentai/src/enum/config_enum.dart';
@@ -36,7 +37,7 @@ class NetworkSetting with JHLifeCircleBeanWithConfigStorage implements JHLifeCir
     proxyUsername.value = map['proxyUsername'] ?? proxyUsername.value;
     proxyPassword.value = map['proxyPassword'] as String?;
     allowProxyDirectFallback.value = map['allowProxyDirectFallback'] == true;
-    enableExEch.value = map['enableExEch'] == true;
+    enableExEch.value = (Platform.isMacOS || Platform.isLinux) && map['enableExEch'] == true;
     connectTimeout.value = map['connectTimeout'] ?? connectTimeout.value;
     receiveTimeout.value = map['receiveTimeout'] ?? receiveTimeout.value;
   }
