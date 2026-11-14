@@ -1,6 +1,5 @@
-import 'dart:io';
-
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:get/get.dart';
 import 'package:jhentai/src/enum/config_enum.dart';
