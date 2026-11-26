@@ -82,7 +82,7 @@ ExEchConfig? _readConfig(dynamic data) {
         continue;
       }
       final ttl = answer['TTL'];
-      final seconds = ttl is int ? ttl.clamp(0, 3600) : 0;
+      final seconds = ttl is int ? ttl.clamp(0, 3600).toInt() : 0;
       best = (encoded: base64Encode(bytes), expires: DateTime.now().add(Duration(seconds: seconds)));
       bestPriority = priority;
     } on FormatException {
