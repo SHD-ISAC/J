@@ -9,6 +9,8 @@ import 'package:jhentai/src/l18n/locale_text.dart';
 import 'package:jhentai/src/network/eh_request.dart';
 import 'package:jhentai/src/routes/getx_router_observer.dart';
 import 'package:jhentai/src/routes/routes.dart';
+import 'package:jhentai/src/utils/route_util.dart';
+import 'package:jhentai/src/pages/home_page.dart';
 import 'package:jhentai/src/service/app_update_service.dart';
 import 'package:jhentai/src/service/archive_download_service.dart';
 import 'package:jhentai/src/service/built_in_blocked_user_service.dart';
@@ -102,6 +104,8 @@ List<JHLifeCircleBean> lifeCircleBeans = [
 ];
 
 void main(List<String> args) async {
+  launchArguments = args;
+
   if (GetPlatform.isDesktop && runWebViewTitleBarWidget(args)) {
     return;
   }
@@ -111,6 +115,10 @@ void main(List<String> args) async {
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     systemNavigationBarColor: Colors.transparent,
     systemNavigationBarDividerColor: Colors.transparent,
+
+    /// Otherwise the system (and many OEM ROMs even with gesture navigation) draws a translucent scrim behind the navigation bar,
+    /// which doesn't match the color of our bottom navigation bar.
+    systemNavigationBarContrastEnforced: false,
     statusBarColor: Colors.transparent,
   ));
 
@@ -162,8 +170,18 @@ class MyApp extends StatelessWidget {
 
       getPages: Routes.pages,
       initialRoute: securitySetting.enablePasswordAuth.isTrue || securitySetting.enableBiometricAuth.isTrue ? Routes.lock : Routes.home,
-      navigatorObservers: [GetXRouterObserver()],
-      builder: (context, child) => AppManager(child: child!),
+      navigatorObservers: [GetXRouterObserver(), FullScreenPageObserver()],
+
+      /// Without the contrast scrim, navigation bar icons must follow the app theme to stay visible. Pages like the read page override it.
+      builder: (context, child) =>
+          AnnotatedRegion<SystemUiOverlayStyle>(
+            value: SystemUiOverlayStyle(
+              systemNavigationBarIconBrightness: Theme
+                  .of(context)
+                  .brightness == Brightness.dark ? Brightness.light : Brightness.dark,
+            ),
+            child: AppManager(child: child!),
+          ),
 
       /// enable swipe back feature
       popGesture: preferenceSetting.enableSwipeBackGesture.isTrue,

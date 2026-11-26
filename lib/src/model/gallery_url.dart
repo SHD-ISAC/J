@@ -16,25 +16,24 @@ class GalleryUrl {
       return null;
     }
 
+    final gid = int.tryParse(match.group(2)!);
+    if (gid == null) {
+      return null;
+    }
+
     return GalleryUrl(
       isEH: match.group(1) == '-',
-      gid: int.parse(match.group(2)!),
+      gid: gid,
       token: match.group(3)!,
     );
   }
 
   static GalleryUrl parse(String url) {
-    RegExp regExp = RegExp(r'https://e([-x])hentai\.org/g/(\d+)/([a-z0-9]{10})');
-    Match? match = regExp.firstMatch(url);
-    if (match == null) {
-      throw InternalException(message: 'Parse gallery url failed, url:$url');
+    final gallery = tryParse(url);
+    if (gallery == null) {
+      throw InternalException(message: 'Parse gallery url failed');
     }
-
-    return GalleryUrl(
-      isEH: match.group(1) == '-',
-      gid: int.parse(match.group(2)!),
-      token: match.group(3)!,
-    );
+    return gallery;
   }
 
   String get url => isEH ? 'https://e-hentai.org/g/$gid/$token/' : 'https://exhentai.org/g/$gid/$token/';

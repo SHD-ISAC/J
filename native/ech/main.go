@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -17,8 +18,9 @@ import (
 )
 
 const (
-	targetHost = "exhentai.org"
-	maxHeader  = 64 << 10
+	targetHost   = "exhentai.org"
+	maxHeader    = 64 << 10
+	maxECHConfig = 6 << 10
 )
 
 type request struct {
@@ -36,6 +38,7 @@ type response struct {
 	Status      int         `json:"status,omitempty"`
 	Headers     http.Header `json:"headers,omitempty"`
 	ECHAccepted bool        `json:"echAccepted,omitempty"`
+	ECHConfig   []byte      `json:"echConfig,omitempty"`
 	Error       string      `json:"error,omitempty"`
 }
 
@@ -64,7 +67,7 @@ func serve(input io.Reader, output io.Writer) error {
 	if err != nil || endpoint.Scheme != "https" || endpoint.Hostname() != targetHost || (endpoint.Port() != "" && endpoint.Port() != "443") || endpoint.User != nil {
 		return fail(output, "echInvalidRequest")
 	}
-	if len(message.ECHConfig) == 0 {
+	if len(message.ECHConfig) == 0 || len(message.ECHConfig) > maxECHConfig {
 		return fail(output, "echConfigUnavailable")
 	}
 
@@ -97,12 +100,15 @@ func serve(input io.Reader, output io.Writer) error {
 		return fail(output, "echProxyUnsupported")
 	}
 	defer transport.CloseIdleConnections()
-	result, err := transport.RoundTrip(req)
+	result, retryConfig, err := roundTripECH(transport, req)
 	if err != nil {
 		var rejected *tls.ECHRejectionError
 		var timeout net.Error
 		switch {
 		case errors.As(err, &rejected):
+			if len(rejected.RetryConfigList) == 0 {
+				return fail(output, "echNotOffered")
+			}
 			return fail(output, "echRejected")
 		case errors.As(err, &timeout) && timeout.Timeout():
 			return fail(output, "echTimedOut")
@@ -115,12 +121,33 @@ func serve(input io.Reader, output io.Writer) error {
 		return fail(output, "echRejected")
 	}
 	if err := json.NewEncoder(output).Encode(response{
-		Status: result.StatusCode, Headers: result.Header, ECHAccepted: true,
+		Status: result.StatusCode, Headers: result.Header, ECHAccepted: true, ECHConfig: retryConfig,
 	}); err != nil {
 		return err
 	}
 	_, err = io.Copy(output, result.Body)
 	return err
+}
+
+func roundTripECH(transport *http.Transport, req *http.Request) (*http.Response, []byte, error) {
+	result, err := transport.RoundTrip(req)
+	var rejection *tls.ECHRejectionError
+	if err == nil || req.Body != nil || (req.Method != http.MethodGet && req.Method != http.MethodHead) || !errors.As(err, &rejection) {
+		return result, nil, err
+	}
+
+	configs := rejection.RetryConfigList
+	if len(configs) < 6 || len(configs) > maxECHConfig || bytes.Equal(configs, transport.TLSClientConfig.EncryptedClientHelloConfigList) {
+		return nil, nil, err
+	}
+
+	// crypto/tls authenticates the rejection before returning retry configs.
+	// Keep the original proxy and certificate verification for the only retry.
+	retry := transport.Clone()
+	retry.TLSClientConfig.EncryptedClientHelloConfigList = configs
+	defer retry.CloseIdleConnections()
+	result, err = retry.RoundTrip(req)
+	return result, configs, err
 }
 
 func fail(output io.Writer, category string) error {
