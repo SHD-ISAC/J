@@ -153,6 +153,31 @@ jobs:
             "$RUNNER_TEMP/jhentai-ech" --version
           fi
 
+      - name: Probe the public ECH endpoint
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          config=''
+          for resolver in 'https://dns.google/resolve' 'https://cloudflare-dns.com/dns-query'; do
+            if answer="$(curl --proto '=https' --fail --silent --show-error --connect-timeout 8 --max-time 12 \
+              --header 'Accept: application/dns-json' --get --data-urlencode 'name=exhentai.org' --data-urlencode 'type=65' "$resolver")"; then
+              config="$(jq -r '[.Answer[]? | select(.type == 65) | .data | try capture("(?:^|[[:space:]])ech=\"?(?<value>[A-Za-z0-9+/=]+)").value] | first // empty' <<< "$answer")"
+              [[ -z "$config" ]] || break
+            fi
+          done
+          if [[ -z "$config" ]]; then
+            echo "::notice::Public ECH probe unavailable because DNS did not return a config"
+            exit 0
+          fi
+          result="$(jq -cn --arg config "$config" \
+            '{URL:"https://exhentai.org/",Method:"HEAD",ECHConfig:$config,ConnectMillis:10000,ReceiveMillis:10000}' \
+            | "$RUNNER_TEMP/jhentai-ech")" || true
+          if [[ -n "$result" ]]; then
+            jq -c '{echAccepted, status, error}' <<< "$result"
+          else
+            echo "::notice::Public ECH probe ended without a response"
+          fi
+
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
