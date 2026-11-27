@@ -183,6 +183,7 @@ class Routes {
       name: details,
       page: () => DetailsPage().withEscOrFifthButton2BackRightRoute(),
       transition: defaultTransition,
+      extendIntoVerticalBar: true,
     ),
     EHPage(
       name: imagePage,

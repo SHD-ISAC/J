@@ -8,28 +8,28 @@ import 'package:get/get.dart';
 import 'package:path/path.dart' as path;
 
 import '../setting/network_setting.dart';
+import '../utils/proxy_util.dart';
 import '../service/local_config_service.dart';
 import '../enum/config_enum.dart';
+import 'ex_ech_config.dart';
 
-enum ExEchStatus { unused, accepted, failed }
-
-final exEchStatus = ExEchStatus.unused.obs;
+final exEchStatusKey = 'echUnused'.obs;
 
 bool isEchFailure(DioException error) => error.error is _EchException;
 
 /// Uses the packaged TLS client for EX when ECH is explicitly enabled.
 /// Dio keeps ownership of cookies, response decoding and download streams.
 class ExEchAdapter implements HttpClientAdapter {
-  static const _host = 'exhentai.org';
-  static const _resolver = 'https://dns.google/resolve?name=$_host&type=65';
+  static const _host = exEchHost;
   static const _redirectCodes = {301, 302, 303, 307, 308};
 
   final _defaultAdapter = HttpClientAdapter();
   final _resolverClient = Dio(BaseOptions(connectTimeout: const Duration(seconds: 6), receiveTimeout: const Duration(seconds: 6)));
   final _connections = _ConcurrentRequests(8);
   final _processes = <Process>{};
-  ({String encoded, DateTime expires})? _echConfig;
+  ExEchConfig? _echConfig;
   Future<String>? _lookup;
+  Future<String>? _systemProxyLookup;
 
   static bool get isAvailable => (Platform.isMacOS || Platform.isLinux) && File(_helperPath).existsSync();
   static String get _helperPath => path.join(path.dirname(Platform.resolvedExecutable), 'jhentai-ech');
@@ -60,10 +60,10 @@ class ExEchAdapter implements HttpClientAdapter {
       var uri = options.uri;
       var method = options.method.toUpperCase();
       var body = requestStream;
+      final proxy = await _proxyUri();
       final config = await (cancelFuture == null
           ? _currentConfig()
           : Future.any([_currentConfig(), cancelFuture.then<String>((_) => throw DioException.requestCancelled(requestOptions: options, reason: null))]));
-      final proxy = _proxyUri();
       while (true) {
         final (result, close) = await _send(options, uri, method, config, proxy, body, cancelFuture);
         final locations = result.headers['location'];
@@ -104,29 +104,27 @@ class ExEchAdapter implements HttpClientAdapter {
       if (error.type == DioExceptionType.cancel) {
         rethrow;
       }
-      exEchStatus.value = ExEchStatus.failed;
       throw _failure(options, 'echConfigUnavailable');
     } on _EchException catch (error) {
-      exEchStatus.value = ExEchStatus.failed;
       throw _failure(options, error.code);
     } on ProcessException {
-      exEchStatus.value = ExEchStatus.failed;
       throw _failure(options, 'echClientMissing');
     } on TimeoutException {
-      exEchStatus.value = ExEchStatus.failed;
       throw _failure(options, 'echTimedOut');
     } catch (_) {
-      exEchStatus.value = ExEchStatus.failed;
       throw _failure(options, 'echFailed');
     }
   }
 
-  DioException _failure(RequestOptions options, String key) => DioException(
-        requestOptions: options,
-        type: DioExceptionType.connectionError,
-        message: key.tr,
-        error: _EchException(key),
-      );
+  DioException _failure(RequestOptions options, String key) {
+    exEchStatusKey.value = key;
+    return DioException(
+      requestOptions: options,
+      type: DioExceptionType.connectionError,
+      message: key.tr,
+      error: _EchException(key),
+    );
+  }
 
   Future<String> _currentConfig() async {
     final config = _echConfig;
@@ -144,38 +142,34 @@ class ExEchAdapter implements HttpClientAdapter {
   }
 
   Future<String> _loadConfig() async {
-    final response = await _resolverClient.get<dynamic>(
-      _resolver,
-      options: Options(headers: {'accept': 'application/dns-json'}, followRedirects: false),
-    );
-    final data = response.data;
-    if (data is Map && data['Status'] == 0 && data['Answer'] is List) {
-      for (final answer in (data['Answer'] as List).whereType<Map>()) {
-        if (answer['type'] != 65 || answer['name'].toString().toLowerCase().replaceFirst(RegExp(r'\.$'), '') != _host) {
-          continue;
-        }
-        final record = answer['data'];
-        if (record is! String || !RegExp(r'^[1-9][0-9]* \. ').hasMatch(record)) {
-          continue;
-        }
-        final encoded = RegExp(r'(?:^|\s)ech="?([A-Za-z0-9+/=]+)"?(?:\s|$)').firstMatch(record)?.group(1);
-        if (encoded != null && encoded.length <= 8192) {
-          final seconds = answer['TTL'] is int ? (answer['TTL'] as int).clamp(0, 3600) : 0;
-          _echConfig = (encoded: encoded, expires: DateTime.now().add(Duration(seconds: seconds)));
-          return encoded;
-        }
-      }
+    final config = await resolveExEchConfig(_resolverClient);
+    if (config == null) {
+      throw const _EchException('echConfigUnavailable');
     }
-    throw const _EchException('echConfigUnavailable');
+    _echConfig = config;
+    return config.encoded;
   }
 
-  String _proxyUri() {
+  Future<String> _refreshSystemProxy() async {
+    final pending = _systemProxyLookup ??= getSystemProxyAddress();
+    try {
+      final address = (await pending).trim();
+      networkSetting.systemProxyAddress = address;
+      return address;
+    } finally {
+      if (identical(_systemProxyLookup, pending)) {
+        _systemProxyLookup = null;
+      }
+    }
+  }
+
+  Future<String> _proxyUri() async {
     final type = networkSetting.proxyType.value;
     if (type == JProxyType.direct) {
       return '';
     }
     if (type == JProxyType.system) {
-      final address = networkSetting.systemProxyAddress;
+      final address = await _refreshSystemProxy();
       if (address.isEmpty) {
         return '';
       }
@@ -264,11 +258,14 @@ class ExEchAdapter implements HttpClientAdapter {
             }
             continue;
           }
+          if (prefix.length + end > 64 * 1024) {
+            throw const _EchException('echInvalidResponse');
+          }
           prefix.add(chunk.sublist(0, end));
           final output = jsonDecode(utf8.decode(prefix.takeBytes())) as Map<String, dynamic>;
           final error = output['error'];
           if (error is String) {
-            if (error == 'echRejected') {
+            if (error == 'echRejected' && _echConfig?.encoded == echConfig) {
               _echConfig = null;
             }
             throw _EchException(error);
@@ -279,7 +276,12 @@ class ExEchAdapter implements HttpClientAdapter {
           final rawHeaders = output['headers'] as Map<String, dynamic>? ?? {};
           final headers = rawHeaders.map((key, value) => MapEntry(key.toLowerCase(), List<String>.from(value as List)));
           final status = output['status'] as int;
-          exEchStatus.value = ExEchStatus.accepted;
+          final cached = _echConfig;
+          final updated = output['echConfig'];
+          if (cached != null && cached.encoded == echConfig && updated is String && updated.length <= 8192) {
+            _echConfig = (encoded: updated, expires: cached.expires);
+          }
+          exEchStatusKey.value = 'echAccepted';
           final result = ResponseBody(
             _readBody(process, cursor, chunk.sublist(end + 1), options),
             status,
@@ -326,7 +328,6 @@ class ExEchAdapter implements HttpClientAdapter {
         throw _failure(options, 'echInvalidResponse');
       }
     } on TimeoutException {
-      exEchStatus.value = ExEchStatus.failed;
       throw _failure(options, 'echTimedOut');
     } finally {
       await cursor.cancel();

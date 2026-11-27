@@ -28,11 +28,11 @@ class SettingNetworkPage extends StatelessWidget {
                 SwitchListTile(
                   title: Text('enableExEch'.tr),
                   subtitle: Text(networkSetting.enableExEch.value
-                      ? "${'lastExConnection'.tr} · ${exEchStatus.value.statusKey.tr}"
+                      ? "${'lastExConnection'.tr} · ${exEchStatusKey.value.tr}"
                       : 'echDescription'.tr),
                   value: networkSetting.enableExEch.value,
                   onChanged: (value) {
-                    exEchStatus.value = ExEchStatus.unused;
+                    exEchStatusKey.value = 'echUnused';
                     networkSetting.saveEnableExEch(value);
                   },
                 ),
@@ -250,12 +250,4 @@ class _TimeoutSettingDialogState extends State<_TimeoutSettingDialog> {
     }
     backRoute(result: parsed);
   }
-}
-
-extension on ExEchStatus {
-  String get statusKey => switch (this) {
-    ExEchStatus.unused => 'echUnused',
-    ExEchStatus.accepted => 'echAccepted',
-    ExEchStatus.failed => 'echFailed',
-  };
 }

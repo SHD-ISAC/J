@@ -23,11 +23,17 @@ class GalleryImagePageUrl {
       return null;
     }
 
+    final gid = int.tryParse(match.group(3)!);
+    final pageNo = int.tryParse(match.group(4)!);
+    if (gid == null || pageNo == null) {
+      return null;
+    }
+
     return GalleryImagePageUrl(
       isEH: match.group(1) == '-',
       imageToken: match.group(2)!,
-      gid: int.parse(match.group(3)!),
-      pageNo: int.parse(match.group(4)!),
+      gid: gid,
+      pageNo: pageNo,
     );
   }
 
@@ -35,7 +41,7 @@ class GalleryImagePageUrl {
     GalleryImagePageUrl? galleryImagePageUrl = tryParse(url);
 
     if (galleryImagePageUrl == null) {
-      throw InternalException(message: 'Parse gallery image page url failed, url:$url');
+      throw InternalException(message: 'Parse gallery image page url failed');
     }
     return galleryImagePageUrl;
   }

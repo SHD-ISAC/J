@@ -35,16 +35,74 @@ import '../../widget/loading_state_indicator.dart';
 import 'layout/horizontal_double_column/horizontal_double_column_layout.dart';
 import 'layout/vertical_list/vertical_list_layout.dart';
 
+/// Hosts the read page of one gallery, and replaces it with the one of another gallery when user switches to the previous or next
+/// gallery, so that the route is kept and there is no page transition.
 class ReadPage extends StatefulWidget {
   const ReadPage({super.key});
 
   @override
-  State<ReadPage> createState() => _ReadPageState();
+  State<ReadPage> createState() => _ReadPageHostState();
 }
 
-class _ReadPageState extends State<ReadPage> with ScrollStatusListener, WindowListener, WindowWidgetMixin {
-  final ReadPageLogic logic = Get.put<ReadPageLogic>(ReadPageLogic());
-  final ReadPageState state = Get.find<ReadPageLogic>().state;
+class _ReadPageHostState extends State<ReadPage> {
+  /// Null while switching gallery
+  ReadPageInfo? readPageInfo = Get.arguments;
+
+  /// [ReadPageLogic] and layout logics are singletons, so dispose those of the old gallery in one frame, and create new ones in the
+  /// next frame.
+  void switchGallery(ReadPageInfo newReadPageInfo) {
+    setState(() => readPageInfo = null);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() => readPageInfo = newReadPageInfo);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (readPageInfo == null) {
+      return const ColoredBox(color: Colors.black, child: SizedBox.expand());
+    }
+
+    return _ReadPageBody(key: ObjectKey(readPageInfo), readPageInfo: readPageInfo!, onSwitchGallery: switchGallery);
+  }
+}
+
+class _ReadPageBody extends StatefulWidget {
+  final ReadPageInfo readPageInfo;
+  final ValueChanged<ReadPageInfo> onSwitchGallery;
+
+  const _ReadPageBody({super.key, required this.readPageInfo, required this.onSwitchGallery});
+
+  @override
+  State<_ReadPageBody> createState() => _ReadPageBodyState();
+}
+
+class _ReadPageBodyState extends State<_ReadPageBody> with ScrollStatusListener, WindowListener, WindowWidgetMixin {
+  late final ReadPageLogic logic;
+  late final ReadPageState state;
+
+  @override
+  void initState() {
+    logic = Get.put<ReadPageLogic>(ReadPageLogic(readPageInfo: widget.readPageInfo));
+    logic.switchGalleryHandler = widget.onSwitchGallery;
+    state = logic.state;
+
+    super.initState();
+  }
+
+  @override
+  void dispose() {
+    /// Normally [ReadPageLogic] is deleted by GetX when the route is disposed. But the route is kept when switching gallery, delete
+    /// it now to make room for the one of the new gallery.
+    if (logic.isSwitchingGallery) {
+      Get.delete<ReadPageLogic>(force: true);
+    }
+
+    super.dispose();
+  }
 
   @override
   ScrollStatusListerState get scrollStatusListerState => state;
@@ -64,6 +122,7 @@ class _ReadPageState extends State<ReadPage> with ScrollStatusListener, WindowLi
       value: const SystemUiOverlayStyle(
         systemNavigationBarColor: Colors.transparent,
         systemNavigationBarDividerColor: Colors.transparent,
+        systemNavigationBarContrastEnforced: false,
         statusBarColor: Colors.transparent,
         systemNavigationBarIconBrightness: Brightness.light,
         statusBarIconBrightness: Brightness.light,
@@ -119,6 +178,7 @@ class _ReadPageState extends State<ReadPage> with ScrollStatusListener, WindowLi
                       ],
                     ),
                     buildRightBottomInfo(context),
+                    buildSwitchGalleryHint(context),
                     buildTopMenu(context),
                     buildBottomMenu(context),
                   ],
@@ -177,7 +237,83 @@ class _ReadPageState extends State<ReadPage> with ScrollStatusListener, WindowLi
       },
     );
 
-    return wrapScrollListener(child);
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        logic.handleScrollNotification(notification);
+        return false;
+      },
+      child: wrapScrollListener(child),
+    );
+  }
+
+  /// Tell user which gallery will be opened when turning page beyond the first or last page
+  Widget buildSwitchGalleryHint(BuildContext context) {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: max(MediaQuery.of(context).viewPadding.bottom, UIConfig.readPageBottomSpacingHeight) + 56,
+      child: IgnorePointer(
+        child: GetBuilder<ReadPageLogic>(
+          id: logic.switchGalleryHintId,
+          builder: (_) {
+            SwitchGalleryHint? hint = state.switchGalleryHint;
+
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              child: hint == null ? const SizedBox.shrink() : _buildSwitchGalleryHintCard(hint),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSwitchGalleryHintCard(SwitchGalleryHint hint) {
+    String boundaryText = hint.next ? 'alreadyLastPage'.tr : 'alreadyFirstPage'.tr;
+    String actionText = hint.gallery == null
+        ? (hint.next ? 'noNextGallery'.tr : 'noPrevGallery'.tr)
+        : (hint.next ? 'turnPageAgainToReadNextGallery'.tr : 'turnPageAgainToReadPrevGallery'.tr);
+
+    return Center(
+      key: ValueKey('${hint.next}::${hint.gallery?.title}'),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 420),
+        margin: const EdgeInsets.symmetric(horizontal: 24),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.85),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              hint.gallery == null ? Icons.block : (hint.next ? Icons.skip_next : Icons.skip_previous),
+              color: UIConfig.readPageForeGroundColor,
+              size: 28,
+            ),
+            const SizedBox(width: 12),
+            Flexible(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('$boundaryText · $actionText', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                  if (hint.gallery != null)
+                    Text(
+                      hint.gallery!.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12, height: 1.4),
+                    ).marginOnly(top: 4),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// right-bottom info
@@ -204,7 +340,15 @@ class _ReadPageState extends State<ReadPage> with ScrollStatusListener, WindowLi
                 borderRadius: const BorderRadius.only(topLeft: Radius.circular(8)),
               ),
               alignment: Alignment.center,
-              padding: const EdgeInsets.only(right: 32, bottom: 1, top: 3, left: 6),
+
+              /// keep the text out of the right system inset, e.g. the vertical status bar of iPhone Duo's inner screen,
+              /// except in immersive mode, where the status bar is hidden
+              padding: EdgeInsets.only(
+                right: readSetting.enableImmersiveMode.isTrue ? 32 : max(32, MediaQuery.paddingOf(context).right + 8),
+                bottom: 1,
+                top: 3,
+                left: 6,
+              ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -400,16 +544,27 @@ class _ReadPageState extends State<ReadPage> with ScrollStatusListener, WindowLi
                   UIConfig.readPageBottomSliderHeight -
                   (readSetting.enableBottomMenu.isTrue ? UIConfig.readPageBottomActionHeight : 0) -
                   max(MediaQuery.of(context).viewPadding.bottom, UIConfig.readPageBottomSpacingHeight),
+          left: 0,
+          right: 0,
           child: ColoredBox(
             color: UIConfig.readPageMenuColor,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (readSetting.showThumbnails.isTrue) Offstage(offstage: !state.isMenuOpen, child: _buildThumbnails(context)),
-                _buildSlider(),
-                if (readSetting.enableBottomMenu.isTrue) _buildBottomAction(),
-                SizedBox(height: max(MediaQuery.of(context).viewPadding.bottom, UIConfig.readPageBottomSpacingHeight)),
-              ],
+
+            /// menu background stays edge-to-edge, while its content avoids the left and right system insets,
+            /// except in immersive mode, where the status bar is hidden and the menu takes the full width
+            child: SafeArea(
+              top: false,
+              bottom: false,
+              left: readSetting.enableImmersiveMode.isFalse,
+              right: readSetting.enableImmersiveMode.isFalse,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (readSetting.showThumbnails.isTrue) Offstage(offstage: !state.isMenuOpen, child: _buildThumbnails(context)),
+                  _buildSlider(),
+                  if (readSetting.enableBottomMenu.isTrue) _buildBottomAction(),
+                  SizedBox(height: max(MediaQuery.of(context).viewPadding.bottom, UIConfig.readPageBottomSpacingHeight)),
+                ],
+              ),
             ),
           ),
         ),
@@ -419,7 +574,7 @@ class _ReadPageState extends State<ReadPage> with ScrollStatusListener, WindowLi
 
   Widget _buildThumbnails(BuildContext context) {
     return SizedBox(
-      width: fullScreenWidth,
+      width: double.infinity,
       height: UIConfig.readPageBottomThumbnailsRegionHeight,
       child: Obx(
         () => EHWheelSpeedControllerForReadPage(
@@ -534,7 +689,7 @@ class _ReadPageState extends State<ReadPage> with ScrollStatusListener, WindowLi
       id: logic.sliderId,
       builder: (_) => SizedBox(
         height: UIConfig.readPageBottomSliderHeight,
-        width: fullScreenWidth,
+        width: double.infinity,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -576,7 +731,7 @@ class _ReadPageState extends State<ReadPage> with ScrollStatusListener, WindowLi
 
     return SizedBox(
       height: UIConfig.readPageBottomActionHeight,
-      width: fullScreenWidth,
+      width: double.infinity,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [

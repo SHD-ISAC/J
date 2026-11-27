@@ -42,7 +42,7 @@ class EHRequest with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
   late final Dio _dio;
   late final EHCookieManager _cookieManager;
   late final EHCacheManager _cacheManager;
-  late final String systemProxyAddress;
+  String get systemProxyAddress => networkSetting.systemProxyAddress;
 
   int get cookieSession => _cookieManager.session;
 
@@ -64,8 +64,7 @@ class EHRequest with JHLifeCircleBeanErrorCatch implements JHLifeCircleBean {
     } catch (error) {
       log.warning('System proxy is unavailable', error.runtimeType);
     }
-    systemProxyAddress = detectedProxy;
-    networkSetting.systemProxyAddress = systemProxyAddress;
+    networkSetting.systemProxyAddress = detectedProxy;
     _initProxy();
     _dio.httpClientAdapter = ExEchAdapter();
 
