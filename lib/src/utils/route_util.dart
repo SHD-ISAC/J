@@ -32,7 +32,7 @@ Future<T?>? toRoute<T>(
   }
 
   if (page.side == Side.left) {
-    if (styleSetting.layout.value == LayoutMode.desktop) {
+    if (styleSetting.isInDesktopLayout) {
       DesktopLayoutPageLogic logic = Get.find<DesktopLayoutPageLogic>();
 
       int? tabIndex = logic.state.icons.firstIndexWhereOrNull((icon) => icon.routeName == routeName);
