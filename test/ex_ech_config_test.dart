@@ -18,7 +18,7 @@ void main() {
     final config = await resolveExEchConfig(client);
 
     expect(config?.encoded, _config);
-    expect(config!.expires, isAfter(DateTime.now()));
+    expect(config!.expires.isAfter(DateTime.now()), isTrue);
     expect(adapter.hosts, ['dns.google']);
   });
 
